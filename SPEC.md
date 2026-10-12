@@ -1,0 +1,289 @@
+# CTX.app — spec
+
+The native macOS window for CTX. It should feel like Terminal.app or Ghostty: fast, crisp, native
+shortcuts. It holds **no shells and no scrollback of its own**. It is a viewer and keyboard for the
+`ctx` server (see [../ctx/SPEC.md](../ctx/SPEC.md)). Anything you can do in the app, an agent can do
+with the `ctx` CLI, and the app reflects it immediately.
+
+## Goals
+
+1. **Low memory:** < 80 MB with 3 windows and 15 tabs. Hidden tabs cost ~nothing.
+2. **Feels native:** Terminal.app keyboard shortcuts, native text input (accents, emoji picker,
+   dictation, voice tools like Handy), smooth trackpad scrolling, system light/dark appearance.
+3. **Fast:** keystroke-to-pixel latency at or below Ghostty's; 120 Hz on ProMotion displays; no
+   flicker in Ink/React TUIs.
+4. **Honest about agents:** you can always see when something other than you touched a tab.
+
+## Non-goals
+
+- Panes, split shells, or a tmux-style layout language.
+- Settings UI beyond the basics (v1). Config is a file.
+- Plugins, AI chat sidebar, or any built-in LLM. (`bro` handles AI assistance at the prompt.)
+
+## Windows and tabs
+
+- One CTX.app window per `ctx` window that you use. Windows you open (⌘N, `ctx open window` from
+  your own terminal) appear; windows agents make (the **Agents** window) don't pop up. They're
+  listed in the Window menu, and `ctx show "<tab>"` brings one forward. Closing an app window closes
+  the `ctx` window (with the usual "processes are running" confirmation). The app does nothing for
+  a window nobody can see (covered, minimised, on another Space).
+- A tab bar like Terminal.app/Ghostty. Drag to reorder, drag to another window to move, drag out
+  to make a new window. All of these are `ctx` operations (`move tab …`, including
+  `ctx move "<tab>" to new window`), so the CLI stays in sync.
+- **Side-by-side tabs (GUI only):** drag a tab onto the left/right/top/bottom edge of the content
+  area to show it next to the current one. This produces *tiles* within the window, each showing
+  exactly one tab. Rules:
+  - Tiles are purely a view. The `ctx` server doesn't know about them; it only knows the window's
+    ordered tab list. `ctx` output never interleaves tabs.
+  - A selection lives inside one tab. You can never select or copy across a tile boundary, so
+    copied text never mixes lines from two tabs.
+  - Tile layout is saved per window in the app's state file and restored on relaunch.
+  - Closing a tab removes its tile; the neighbour takes the space.
+- The app reconnects to all existing `ctx` windows on launch (they survive an app crash).
+- **Tab labels** show the tab's name, if it has one, and its current folder, e.g.
+  `Dev server — ~/code/site`; when space is tight the folder is shortened from the left and the
+  name stays whole. A tab without a name
+  shows its folder only. A program's terminal title (OSC 0/2) appears in the tooltip and in the
+  window title, never in place of the name. Double-click a tab to rename it (same character rules
+  as `ctx rename`).
+- Tabs opened by an agent carry a small marker with the agent's name (e.g. `claude`) and land in
+  the **Agents** window unless the agent picked a window. You can watch that window live, or open
+  it later to audit what was run.
+- **Closed tabs:** ⌘⇧T reopens the most recently closed tab (`ctx reopen`). The *History* menu
+  (⌘Y) is a searchable list of saved tabs, filterable by folder, name, who opened it, and date.
+  Selecting one shows its saved commands and output, with colours, read-only. A *Reopen* button
+  brings it back. This is the human view of `ctx list closed tabs` / `ctx find`.
+- On launch after a reboot or crash, a bar offers "Reopen 7 tabs from last time"
+  (`reopen_on_launch`).
+- **Each viewer chooses its own look.** The app is the viewer, the CLI the controller, the server
+  the model. A window's colours (its theme; View ▸ Theme, per window) are sent to the server, which
+  applies them to that window's tabs and answers programs' colour queries with them. Font size is
+  per tab (⌘+ / ⌘-). A terminal attached with `ctx attach` keeps its own colours and font. A
+  program has one grid size, so the viewer that last resized the tab sets its rows and columns.
+
+## Rendering
+
+The memory goes to window pixel buffers, not text. A window's on-screen image is a full grid of
+pixels whatever it shows (a 1700×1050 pt window on a Retina display is ~28 MB per buffer), and
+on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the main lever.
+
+- **Toolkit:** AppKit via `objc2` bindings (native windows, tab bar, menus, text input). No
+  Electron, no web view, no cross-platform GUI toolkit.
+- **One text surface per window, whatever the tab count.** Switching tabs doesn't swap in a
+  different view. The window's single surface just starts drawing another tab's text. The app
+  asks the server for that tab's visible rows (a few KB), drops the previous tab's rows, and
+  redraws. Tabs that aren't visible cost the app zero bytes; only the server holds their text.
+- **Drawing (chosen by measurement, 2026-10-11):** Core Text glyphs drawn on the CPU into **one
+  IOSurface per window**, handed to the window's layer as its contents. That is exactly one pixel
+  buffer per window, and it stays one buffer while output streams. Side-by-side tiles are regions
+  of the same surface. Measured on an M4 Pro (footprint, windows redrawing at 60 fps):
+
+  | | 1 window 1700×1050 pt | 3 windows 1700×1050 pt | 3 windows 900×600 pt |
+  |---|---|---|---|
+  | Metal, 2 drawables | 200 MB | 327 MB | – |
+  | AppKit layer-backed view (`drawRect`) | 284 MB | 555 MB | – |
+  | **IOSurface + Core Text (chosen)** | **44 MB** | **101 MB** | **43 MB** |
+
+  A full repaint of every cell takes 2–4 ms; normal updates redraw only changed rows.
+  - Draw only when the server sends a change or the user scrolls/selects. No render loop. Cursor
+    blink uses a timer that redraws just the cursor's row, and only runs while needed.
+  - When a window is minimised, fully covered or on another Space, its surface is released
+    (`NSWindow.occlusionState`) and its tabs are unsubscribed.
+  - Colours: full truecolor plus the 256/16-colour palettes, bold/italic/underline/strikethrough,
+    reverse video, dim. Each cell is drawn from the server's `(text, style)` runs.
+  - **Box drawing (U+2500–257F) and block elements (U+2580–259F)** are drawn as shapes filling the
+    cell, so lines join across rows whatever the font's line height (light, heavy, double, dashed,
+    rounded corners, diagonals, eighths, shades, quadrants).
+- **Glyphs:** shaped and rasterised with Core Text, so text looks like Terminal.app (SF Mono
+  default, emoji via Apple Color Emoji, fallback fonts for symbols and CJK, shaped clusters for
+  emoji sequences and combining marks). Text-style symbols (✔ ☐ ★) take the text colour; only
+  emoji-presentation characters use the emoji font. Glyph lookups are cached per font set
+  (bounded); Core Graphics caches the rasterised glyphs, shared by the whole app.
+- **Cell data:** the app keeps only the rows of tabs on screen. Scrolling back fetches scrollback
+  lines from the server on demand, with a read-ahead cache of a few thousand lines.
+
+## Input
+
+- `NSTextInputClient` for full IME, dead keys, emoji picker, and dictation/voice tools that insert
+  text.
+- Keys are forwarded as key events to the server, which encodes them (xterm or kitty keyboard
+  protocol, whichever the program asked for). The app doesn't encode escape sequences itself.
+- Option-as-Meta: configurable per side (`left_option_is_meta = true` default), like Terminal.app.
+- Mouse: selection, word/line selection, ⌘-click opens links (URLs found in the text; OSC 8 is
+  later), and mouse reporting to programs that request it (hold ⌥ to select anyway). The app sends
+  mouse events; the server encodes them for the program.
+- Dropping files on a tab types their paths, shell-quoted (as Terminal.app does).
+- Paste goes through the server's bracketed paste. Pasting more than one line into a shell prompt
+  (not a full-screen program) shows a one-line preview first. Configurable.
+
+## Keyboard shortcuts (Terminal.app conventions)
+
+| Shortcut | Action |
+|---|---|
+| ⌘N | New window |
+| ⌘Q | Quit (confirms if commands are running) |
+| ⌘C / ⌘V | Copy selection / paste |
+| ⌘A | Select all in this tab |
+| ⌘T | New tab (same folder as current tab) |
+| ⌘W | Close tab |
+| ⌘⇧W | Close window |
+| ⌘1…⌘9 | Go to tab N in this window |
+| ⌘⇧[ / ⌘⇧] | Previous / next tab |
+| ⌘K | Clear scrollback (the saved record is kept) |
+| ⌘⇧T | Reopen last closed tab |
+| ⌘Y | History of saved tabs |
+| ⌘F | Find in this tab |
+| ⌘⇧F | Find in all tabs (`ctx find`) |
+| ⌘+ / ⌘- / ⌘0 | Font size |
+| ⌘⌥← → ↑ ↓ | Move focus between side-by-side tiles |
+| ⌘⇧I | Rename tab |
+| ⌘⇧A | Activity panel |
+| ⌘, | Open the config file |
+| ⌃⌘F | Full screen |
+| ⌘M, ⌘H, ⌘` | Minimise, hide, cycle windows (standard macOS) |
+
+All shortcuts are listed in the menus (so they're discoverable) and can be rebound in config
+(`[app.keys]`). If a terminal program needs a key the app would take, ⌥-less ⌃ combinations
+always go to the program, as in Terminal.app.
+
+## Agent visibility
+
+- A small dot badge on a tab when another client (not the app) has typed into it or read it in the
+  last 60 seconds. Its colour differs for "typed" and "read only".
+- Click the badge (or ⌘⇧A) to open the **Activity** panel: a plain-language list from the server's
+  log, e.g. *"claude (in tab 2) typed `npm test` and pressed Enter in tab 4 — 12s ago"*.
+- When an agent runs `ctx show "Dev server"`, the app brings that tab forward but doesn't steal keyboard
+  focus from another app.
+
+## Permissions
+
+- CTX.app requests **no** privacy permissions (no Full Disk Access, Accessibility, Screen Recording,
+  Automation). It reads only its config and state files. Shells are spawned by the `ctx` server
+  with their own macOS identity (see [ctx spec § Permissions](../ctx/SPEC.md#permissions)), so
+  nothing granted to the app could reach them anyway.
+- On first launch, registers the `ctx` server as a LaunchAgent via `SMAppService.agent` (the
+  bundle carries `ctx`, `ctx-launch` and `bro`) and installs the `ctx` and `bro` command-line
+  tools (symlinks into `/usr/local/bin` when writable, else `~/.local/bin`, with consent). When the
+  command line registered the server earlier, the app's registration replaces it; the command line
+  then only starts it. A trial or test setup (`CTX_HOME`) never touches launchd or PATH.
+- Signed with Developer ID, hardened runtime, notarized. No App Sandbox (it must talk to the
+  server's socket and launch it), but no entitlements beyond what that needs.
+
+## Configuration
+
+`~/.config/ctx/config.toml`, `[app]` section. Reloaded on change.
+
+```toml
+[app]
+font = "SF Mono"
+font_size = 13
+theme = "system"            # follows macOS light/dark; or a theme file name
+left_option_is_meta = true
+right_option_is_meta = false
+confirm_multiline_paste = true
+cursor = "block"            # block | bar | underline
+cursor_blink = false
+```
+
+Themes: Terminal.app's "Basic" look by default (`system` picks Basic or Basic dark with macOS);
+built in: `basic`, `basic-dark`, `ghostty`. Theme files live in `~/.config/ctx/themes/<name>.toml`:
+
+```toml
+palette = ["#000000", "#990000", …]   # 16 ANSI colours
+foreground = "#ffffff"
+background = "#1e1e1e"
+cursor = "#929292"                    # optional
+selection = "#3f638b"                 # optional
+dark = true                           # optional; worked out from the background otherwise
+```
+
+Shortcuts are rebound by action name in `[app.keys]` (`new_tab = "cmd-shift-n"`, `"none"` to
+remove one); a rebinding takes the key away from the action that had it. The server ignores the
+`[app]` section and the app ignores the rest.
+
+## Stack
+
+| Concern | Choice | Why |
+|---|---|---|
+| Language | Rust, edition 2024, pinned stable toolchain | |
+| macOS UI | `objc2` + `objc2-app-kit`, `objc2-foundation`, `objc2-quartz-core`, `objc2-core-text`, `objc2-core-graphics`, `objc2-io-surface`, `objc2-service-management`, `block2`, `dispatch2` | native AppKit, typed bindings, no Xcode project |
+| Rendering | Core Text on the CPU into one IOSurface per window | measured: one buffer per window (see Rendering) |
+| Text | `unicode-segmentation`, `unicode-width` | graphemes and cell widths for scrollback lines |
+| Server connection | `ctx-protocol` crate (the one cross-project dependency) | protocol versions checked on connect |
+| Config | `toml` + `serde`, `serde_json` for the state file, file watching via `FSEvents` FFI | |
+| Bundling | small `xtask` that builds the `.app`, signs (Developer ID, hardened runtime) and notarizes | reproducible in CI |
+
+No cross-platform GUI toolkit, no web view, no async runtime.
+
+## Testing
+
+**Unit tests** (`cargo test`, every commit; no window server needed):
+
+- layout: tile splitting, closing, dividers, neighbours, drop edges;
+- selection and copy: word/line selection, wide characters and emoji, wrapped lines joined
+  correctly, trailing spaces trimmed; a selection belongs to one tab, so it can't cross a tile;
+- screen model: row updates, scrollback cache, scrolling, wrapping, clamping;
+- rendering: cell metrics, glyph plans and fallbacks (cached, never looked up twice), pixels of a
+  drawn row; box-drawing tables;
+- input mapping: key → key name for the server, Option-as-Meta per side, IME composition;
+- shortcut table: no two actions share a key; every action appears in a menu; rebinding;
+- config, themes, the state file, link finding.
+
+**Integration tests** (need a `ctx` build; a throwaway server under `CTX_HOME`):
+
+- `tests/selftest.sh`: the app drives itself with real AppKit events (keys through text input,
+  clicks, menu shortcuts) and checks: typing, double-click + Copy, Paste, find in a tab, scrollback
+  fetched on demand, ⌘T, tiles resizing their tabs, ⌘W, rename, History + Reopen, a badge from
+  another client's read, the Activity and Find-all panels, font size, and keystroke-to-pixels
+  latency. No Accessibility or Screen Recording permission is needed: the events never leave the
+  app.
+- `cargo test --test screens`: colours, emoji/CJK, box drawing, an Ink-style redraw and vim are
+  drawn by the app's renderer (`CTX --render`) and compared with approved PNGs in
+  `tests/reference/` (tolerant diff).
+- `tests/crash.sh`: `kill -9` the app and relaunch; every window and tab comes back, with
+  scrollback.
+- `scripts/budgets.sh`: the memory budget workload.
+
+## Crate layout
+
+```
+ctx-app/
+  src/app/        AppKit: app delegate, windows, terminal view, tab bar, menus, panels,
+                  first-run install, config watching, self-test
+  src/render.rs   Core Text drawing into IOSurfaces (and PNGs); src/boxes.rs box drawing
+  src/model.rs    a tab's screen, scrollback cache and scroll position
+  src/selection.rs, src/layout.rs (tiles), src/keys.rs, src/shortcuts.rs, src/links.rs
+  src/client.rs   connection to the ctx server (ctx-protocol)
+  src/headless.rs drawing a tab to a PNG without a window (`CTX --render`)
+  bundle/         Info.plist, entitlements, LaunchAgent plist
+  xtask/          `cargo xtask bundle`: builds, signs and notarizes CTX.app
+  tests/          self-test, reference screens, crash test
+```
+
+## Protocol additions (ctx protocol version 2)
+
+What the viewer needs from the model, added to `ctx-protocol` and the server:
+
+- Every request from the app carries an id, and its reply the same id (some replies come later
+  than others).
+- `SetLook`: a window's palette, colours and default cursor for a tab.
+- `History`: scrollback lines by number (logical lines; the app wraps them).
+- `SearchTab`: matches in one tab, with positions. `SavedTab`: a closed tab's records, coloured.
+- Screen updates carry: the row's soft-wrap flag, cursor shape and blink, mouse tracking, whether
+  the shell is at its prompt, and the scrollback's line range.
+- `AppInput::Mouse`: mouse events, encoded by the server for the program.
+- `StreamOut::Activity`: another client typed into or read a tab (badges, Activity panel).
+- `WindowRef::New`: `ctx move "<tab>" to new window`.
+- The app is always "you" to the server, whoever launched it; its input and colour requests are
+  never held while a tab's shell starts, and opening a tab from the app answers at once.
+
+## Acceptance tests
+
+Results (2026-10-11, M4 Pro, macOS 27, release build) are in the README.
+
+- Claude Code, vim, htop/top, `lazygit`, and an Ink (React) demo app render and behave identically
+  to Ghostty side by side (screenshot diff + manual check).
+- 15 tabs / 3 windows / `top` running: app < 80 MB, server < 40 MB, total < 25% of Terminal.app's
+  footprint for the same workload.
+- Copying a selection from a tile never contains text from another tile.
+- Killing CTX.app with `kill -9` and relaunching restores every window and tab with scrollback.

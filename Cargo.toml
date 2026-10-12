@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = [".", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+publish = false
+
+[package]
+name = "ctx-app"
+description = "CTX.app: the native macOS window for the ctx server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "CTX"
+path = "src/main.rs"
+
+[lib]
+name = "ctx_app"
+path = "src/lib.rs"
+
+# Every dependency is justified in SPEC.md § Stack.
+[dependencies]
+ctx-protocol = { path = "../ctx/ctx-protocol" }
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+objc2-quartz-core = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = "0.3.2"
+objc2-core-text = "0.3.2"
+objc2-io-surface = "0.3.2"
+objc2-service-management = "0.3.2"
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
+libc = "0.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.1.8"
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

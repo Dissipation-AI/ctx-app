@@ -1,0 +1,11 @@
+printf '\033[?1049h\033[H\033[?25l'
+echo 'Emoji: 😀 😎 🚀 ✅ ❌ ⚠️  🎉 🐍 🦀'
+echo 'Skin tones and sequences: 👍🏽 👋🏿 👨‍👩‍👧 🏳️‍🌈 🇺🇸 🇯🇵'
+echo 'CJK: 日本語のテキスト 中文字符 한국어'
+echo 'Accents: café naïve résumé Ångström Ñandú'
+echo 'Symbols: → ← ↑ ↓ ⇒ ∀ ∃ ∑ π λ ∞ ≠ ≤ ≥ ✓ ✗ • … © ®'
+echo 'Wide in a box:'
+echo '┌────────────┐'
+echo '│ 日本 漢字  │'
+echo '└────────────┘'
+sleep 60

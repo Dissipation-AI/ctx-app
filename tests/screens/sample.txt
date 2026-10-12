@@ -1,0 +1,8 @@
+# CTX screen test
+
+This file is opened in vim with no configuration, so the screen is the same
+on every machine: text, tildes for lines past the end, and the status line.
+
+fn main() {
+    println!("hello, world");
+}
