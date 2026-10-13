@@ -31,6 +31,9 @@ use winit::window::{CursorIcon, Window, WindowId};
 /// Dialogs are drawn by the app (there's no native alert to borrow).
 pub const NATIVE_DIALOGS: bool = false;
 
+/// Ctrl-click opens a link, as in other Linux terminals.
+pub const LINK_MODIFIER: u64 = keys::CONTROL;
+
 // ---------------------------------------------------------------------------------------------
 // The loop, and running things on it
 // ---------------------------------------------------------------------------------------------

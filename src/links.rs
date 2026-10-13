@@ -67,8 +67,19 @@ pub fn find(text: &str) -> Vec<(usize, usize, String)> {
     out
 }
 
-/// Links on a row, by column.
+/// Links on a row, by column: the program's own (OSC 8) first, then URLs found in the text.
 pub fn on_row(row: &Row, measured: bool) -> Vec<Link> {
+    let mut out: Vec<Link> =
+        row.links.iter().map(|l| Link { start: l.start as usize, end: l.end as usize, url: l.uri.clone() }).collect();
+    for l in found_on_row(row, measured) {
+        if !out.iter().any(|o| l.start < o.end && o.start < l.end) {
+            out.push(l);
+        }
+    }
+    out
+}
+
+fn found_on_row(row: &Row, measured: bool) -> Vec<Link> {
     let cells = row.cells(measured);
     let text: String = cells.iter().map(|c| c.text).collect::<Vec<_>>().join("");
     // Character index → cell index (a cell may hold several characters).
@@ -95,6 +106,15 @@ pub fn at(row: &Row, measured: bool, column: usize) -> Option<Link> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_programs_own_links_come_first() {
+        let mut r = Row::plain("see docs at https://a.example now");
+        r.links = vec![ctx_protocol::LinkSpan { start: 4, end: 8, uri: "https://docs.example/x".into() }];
+        assert_eq!(at(&r, false, 5).map(|l| l.url).as_deref(), Some("https://docs.example/x"));
+        assert_eq!(at(&r, false, 14).map(|l| l.url).as_deref(), Some("https://a.example"));
+        assert!(at(&r, false, 1).is_none());
+    }
 
     #[test]
     fn finds_urls_and_trims_punctuation() {

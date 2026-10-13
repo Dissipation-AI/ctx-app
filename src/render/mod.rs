@@ -524,6 +524,7 @@ mod tests {
             ],
             wraps: false,
             event: false,
+            links: Vec::new(),
         };
         let w = (fonts.cell_w * 10.0 + 2.0 * PAD_X).ceil();
         let h = (fonts.cell_h * 2.0 + 2.0 * PAD_Y).ceil();

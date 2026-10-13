@@ -98,7 +98,7 @@ impl Screen {
         }
         for r in u.changed {
             if let Some(slot) = self.lines.get_mut(r.row as usize) {
-                *slot = Row { runs: r.runs, wraps: r.wraps, event: r.event };
+                *slot = Row { runs: r.runs, wraps: r.wraps, event: r.event, links: r.links };
                 ch.rows.push(r.row);
             }
         }
@@ -179,7 +179,7 @@ impl History {
         self.first = h.first;
         self.end = self.end.max(h.end);
         for (i, l) in h.lines.into_iter().enumerate() {
-            self.lines.insert(h.from + i as u64, Row { runs: l.runs, wraps: false, event: l.event });
+            self.lines.insert(h.from + i as u64, Row { runs: l.runs, wraps: false, event: l.event, links: Vec::new() });
         }
     }
 
@@ -327,6 +327,7 @@ mod tests {
                     runs: vec![StyledRun { text: t.to_string(), ..Default::default() }],
                     event: false,
                     wraps: false,
+                    links: Vec::new(),
                 })
                 .collect(),
             cursor: Some([0, 0]),

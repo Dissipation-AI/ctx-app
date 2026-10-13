@@ -386,7 +386,7 @@ impl App {
             self.update_window_titles();
         }
         let tracking = self.views.get(&tab).is_some_and(|v| v.screen.mouse_tracking);
-        if flags & keys::COMMAND != 0 && button == 1 {
+        if flags & plat::LINK_MODIFIER != 0 && button == 1 && self.link_at(tab, place, col).is_some() {
             if let Some(url) = self.link_at(tab, place, col) {
                 plat::open_url(&url);
             }
@@ -644,9 +644,9 @@ impl App {
             self.redraw_dirty();
             return;
         }
-        // ⌘ over a link underlines it.
+        // ⌘ (Ctrl on Linux) over a link underlines it.
         let mut link = None;
-        if flags & keys::COMMAND != 0
+        if flags & plat::LINK_MODIFIER != 0
             && let Some((tab, place, col, _)) = self.hit(w, x, y)
             && let Some(row) = self.row_at(tab, place)
         {

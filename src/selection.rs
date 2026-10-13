@@ -236,6 +236,7 @@ mod tests {
             ],
             wraps: false,
             event: false,
+            links: Vec::new(),
         };
         let src = Rows(vec![r]);
         // Columns: a=0, 日=1-2, 本=3-4, b=5. Starting on the second half of 日 still takes it.

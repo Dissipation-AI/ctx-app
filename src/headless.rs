@@ -117,7 +117,7 @@ fn icon(px: usize, path: &std::path::Path) -> Result<(), String> {
     let mut fonts = FontCache::default();
     let f = fonts.get("SF Mono", 22.0, scale);
     let green = CellStyle { foreground: Some([80, 220, 120]), flags: 1, ..Default::default() };
-    let row = Row { runs: vec![StyledRun { text: ">_".into(), style: green, cells: Vec::new() }], wraps: false, event: false };
+    let row = Row { runs: vec![StyledRun { text: ">_".into(), style: green, cells: Vec::new() }], wraps: false, event: false, links: Vec::new() };
     let margin = (6.0 * scale).round();
     let tile = TileFrame {
         x: margin,

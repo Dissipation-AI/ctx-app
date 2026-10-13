@@ -27,6 +27,9 @@ use std::time::Duration;
 /// Alerts are NSAlert.
 pub const NATIVE_DIALOGS: bool = true;
 
+/// ⌘-click opens a link, as in Terminal.app.
+pub const LINK_MODIFIER: u64 = keys::COMMAND;
+
 fn mtm() -> MainThreadMarker {
     MainThreadMarker::new().expect("main thread")
 }

@@ -175,7 +175,7 @@ pub fn record_rows(rec: &CommandOutputs, palette: &[[u8; 3]; 256]) -> Vec<Row> {
     let mut rows = Vec::new();
     let bold = CellStyle { flags: 1, ..Default::default() };
     if rec.commands.is_empty() {
-        rows.push(Row { runs: vec![StyledRun { text: "No commands were saved for this tab.".into(), style: CellStyle { flags: 4, ..Default::default() }, cells: Vec::new() }], wraps: false, event: false });
+        rows.push(Row { runs: vec![StyledRun { text: "No commands were saved for this tab.".into(), style: CellStyle { flags: 4, ..Default::default() }, cells: Vec::new() }], wraps: false, event: false, links: Vec::new() });
     }
     for c in &rec.commands {
         let by = if c.ran_by == "you" { String::new() } else { format!("  (ran by {})", c.ran_by) };
@@ -183,10 +183,10 @@ pub fn record_rows(rec: &CommandOutputs, palette: &[[u8; 3]; 256]) -> Vec<Row> {
             Some(0) | None => String::new(),
             Some(n) => format!("  [exit {n}]"),
         };
-        rows.push(Row { runs: vec![StyledRun { text: format!("{} {}{by}{status}", c.location, c.command), style: bold, cells: Vec::new() }], wraps: false, event: false });
+        rows.push(Row { runs: vec![StyledRun { text: format!("{} {}{by}{status}", c.location, c.command), style: bold, cells: Vec::new() }], wraps: false, event: false, links: Vec::new() });
         let events: Vec<u64> = c.events.iter().map(|e| e.line).collect();
         for (i, line) in c.output.iter().enumerate() {
-            rows.push(Row { runs: ctx_protocol::sgr::runs(line, palette), wraps: false, event: events.contains(&(i as u64)) });
+            rows.push(Row { runs: ctx_protocol::sgr::runs(line, palette), wraps: false, event: events.contains(&(i as u64)), links: Vec::new() });
         }
         rows.push(Row::default());
     }
