@@ -1,7 +1,15 @@
-//! AppKit: the application delegate, windows, the terminal view (keyboard, text input, mouse,
-//! drops), the tab bar, the find and reopen bars, menus and alerts. These classes hold almost no
-//! state; they forward to the [`App`](super::App).
+//! macOS: the application delegate, windows, one content view per window (keyboard, text
+//! input, mouse, drops) whose layer shows the window's IOSurface, the menu bar, and alerts.
+//! Everything inside a window (tab bar, terminal, panels) is drawn by the shared app; these
+//! classes hold almost no state and forward to the [`App`].
+//!
+//! With `tabs_in_titlebar` (the default) the window's content runs under a transparent title
+//! bar, and the tabs sit beside the red/yellow/green buttons, which are re-centred in the bar.
 
+pub mod install;
+pub mod watch;
+
+use super::input::Cursor;
 use super::{App, later, with_app};
 use crate::keys::{self, Press};
 use crate::render::Surface;
@@ -14,6 +22,72 @@ use objc2_app_kit::*;
 use objc2_foundation::*;
 use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
+use std::time::Duration;
+
+/// Alerts are NSAlert.
+pub const NATIVE_DIALOGS: bool = true;
+
+fn mtm() -> MainThreadMarker {
+    MainThreadMarker::new().expect("main thread")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Running things on the main thread
+// ---------------------------------------------------------------------------------------------
+
+struct SendBox(Box<dyn FnOnce()>);
+// SAFETY: only ever run on the main queue, the thread it was made on.
+unsafe impl Send for SendBox {}
+
+/// From the server reader thread: there are events to handle.
+pub fn wake() {
+    dispatch2::DispatchQueue::main().exec_async(super::drain);
+}
+
+/// Run `f` on the main thread soon (outside whatever is running now).
+pub fn post(f: Box<dyn FnOnce()>) {
+    let b = SendBox(f);
+    dispatch2::DispatchQueue::main().exec_async(move || {
+        let b = b;
+        (b.0)()
+    });
+}
+
+pub fn post_from_any_thread(f: Box<dyn FnOnce() + Send>) {
+    dispatch2::DispatchQueue::main().exec_async(f);
+}
+
+pub fn after(ms: u64, f: Box<dyn FnOnce()>) {
+    let b = SendBox(f);
+    let when = dispatch2::DispatchTime::NOW.time(Duration::from_millis(ms).as_nanos() as i64);
+    let _ = dispatch2::DispatchQueue::main().after(when, move || {
+        let b = b;
+        (b.0)()
+    });
+}
+
+/// A repeating timer calling [`App::tick`].
+pub struct Ticker(Retained<NSTimer>);
+
+impl Ticker {
+    pub fn stop(&self) {
+        self.0.invalidate();
+    }
+}
+
+pub fn start_ticker(ms: u64) -> Ticker {
+    let block = RcBlock::new(|_t: NonNull<NSTimer>| {
+        if with_app(|a| a.tick()).is_none() {
+            later(|a| a.tick());
+        }
+    });
+    Ticker(unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(ms as f64 / 1000.0, true, &block) })
+}
+
+/// Call into the app now if it's free and nothing is queued before it, else in order later.
+fn call(f: impl FnOnce(&mut App) + 'static) {
+    super::call(f);
+}
 
 // ---------------------------------------------------------------------------------------------
 // Application
@@ -27,7 +101,12 @@ fn delegate() -> Option<Retained<AppDelegate>> {
     DELEGATE.with(|d| d.borrow().clone())
 }
 
-pub fn init_application(mtm: MainThreadMarker) {
+fn delegate_obj() -> Option<Retained<AnyObject>> {
+    delegate().map(|d| Retained::into_super(Retained::into_super(d)))
+}
+
+pub fn run() {
+    let mtm = mtm();
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let d = AppDelegate::new(mtm);
@@ -47,17 +126,16 @@ define_class!(
     unsafe impl NSApplicationDelegate for AppDelegate {
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _n: &NSNotification) {
-            let mtm = self.mtm();
-            super::launched(mtm);
+            super::launched();
             #[allow(deprecated)]
-            NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+            NSApplication::sharedApplication(self.mtm()).activateIgnoringOtherApps(true);
         }
 
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, _app: &NSApplication) -> NSApplicationTerminateReply {
             let summary = with_app(|a| if a.quitting { None } else { a.quit_summary() }).flatten();
             if let Some(s) = summary
-                && !ask("Quit CTX?", &format!("These are still running and will be stopped:\n{s}"), "Quit", "Cancel")
+                && !ask_native("Quit CTX?", &format!("These are still running and will be stopped:\n{s}"), "Quit", "Cancel")
             {
                 return NSApplicationTerminateReply::TerminateCancel;
             }
@@ -90,16 +168,6 @@ define_class!(
         }
     }
 
-    unsafe impl NSControlTextEditingDelegate for AppDelegate {
-        #[unsafe(method(control:textView:doCommandBySelector:))]
-        fn control_command(&self, control: &NSControl, _tv: &NSTextView, sel: Sel) -> bool {
-            find_command(self.mtm(), control.tag() as u64, sel)
-        }
-    }
-
-    unsafe impl NSSearchFieldDelegate for AppDelegate {}
-    unsafe impl NSTextFieldDelegate for AppDelegate {}
-
     impl AppDelegate {
         #[unsafe(method(menuAction:))]
         fn menu_action(&self, sender: &NSMenuItem) {
@@ -126,82 +194,10 @@ define_class!(
         fn set_theme(&self, sender: &NSMenuItem) {
             let name = sender.representedObject().and_then(|o| o.downcast::<NSString>().ok()).map(|s| s.to_string());
             later(move |a| {
-                if let Some(w) = a.key_window() {
-                    let name = name.filter(|n| *n != a.loaded.app.theme);
-                    a.set_window_theme(w, name);
-                    rebuild_window_menu(a);
+                if let Some(t) = a.key_window().and_then(|w| a.focused_tab(w)) {
+                    a.set_tab_theme(t, name);
                 }
             });
-        }
-
-        #[unsafe(method(findChanged:))]
-        fn find_changed(&self, sender: &NSSearchField) {
-            let w = sender.tag() as u64;
-            let text = sender.stringValue().to_string();
-            later(move |a| a.find_changed(w, text));
-        }
-
-        #[unsafe(method(findDone:))]
-        fn find_done(&self, sender: &NSButton) {
-            let w = sender.tag() as u64;
-            later(move |a| a.close_find(w));
-        }
-
-        #[unsafe(method(reopenAccept:))]
-        fn reopen_accept(&self, sender: &NSButton) {
-            let w = sender.tag() as u64;
-            later(move |a| a.reopen_offer(w, true));
-        }
-
-        #[unsafe(method(reopenDecline:))]
-        fn reopen_decline(&self, sender: &NSButton) {
-            let w = sender.tag() as u64;
-            later(move |a| a.reopen_offer(w, false));
-        }
-
-        #[unsafe(method(tabRename:))]
-        fn tab_rename(&self, sender: &NSMenuItem) {
-            let t = sender.tag() as u64;
-            later(move |a| {
-                let current = a.tab_info(t).and_then(|i| i.name.clone()).unwrap_or_default();
-                super::outside(move || {
-                    if let Some(name) = prompt("Rename tab", "Letters, digits, spaces, - and _.", &current) {
-                        later(move |a| a.rename_tab(t, name));
-                    }
-                });
-            });
-        }
-
-        #[unsafe(method(tabClose:))]
-        fn tab_close(&self, sender: &NSMenuItem) {
-            let t = sender.tag() as u64;
-            later(move |a| a.close_tab(t, false));
-        }
-
-        #[unsafe(method(tabTile:))]
-        fn tab_tile(&self, sender: &NSMenuItem) {
-            let t = sender.tag() as u64;
-            later(move |a| {
-                if let Some(w) = a.tab_info(t).map(|i| i.window) {
-                    a.tile(w, t, None, crate::layout::Edge::Right);
-                }
-            });
-        }
-
-        #[unsafe(method(tabUntile:))]
-        fn tab_untile(&self, sender: &NSMenuItem) {
-            let t = sender.tag() as u64;
-            later(move |a| {
-                if let Some(w) = a.tab_info(t).map(|i| i.window) {
-                    a.untile(w, t);
-                }
-            });
-        }
-
-        #[unsafe(method(tabNewWindow:))]
-        fn tab_new_window(&self, sender: &NSMenuItem) {
-            let t = sender.tag() as u64;
-            later(move |a| a.move_tab(t, ctx_protocol::WindowRef::New, None));
         }
     }
 );
@@ -213,36 +209,20 @@ impl AppDelegate {
     }
 }
 
-fn find_command(mtm: MainThreadMarker, w: u64, sel: Sel) -> bool {
-    if sel == sel!(cancelOperation:) {
-        later(move |a| a.close_find(w));
-        return true;
-    }
-    if sel == sel!(insertNewline:) {
-        let back = current_flags(mtm) & keys::SHIFT != 0;
-        later(move |a| a.find_step(w, !back));
-        return true;
-    }
-    false
-}
-
-pub fn system_is_dark(mtm: MainThreadMarker) -> bool {
-    let app = NSApplication::sharedApplication(mtm);
+pub fn system_is_dark() -> bool {
+    let app = NSApplication::sharedApplication(mtm());
     let appearance = app.effectiveAppearance();
     let names = unsafe { NSArray::from_slice(&[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]) };
     appearance.bestMatchFromAppearancesWithNames(&names).is_some_and(|n| &*n == unsafe { NSAppearanceNameDarkAqua })
 }
 
-fn mtm() -> MainThreadMarker {
-    MainThreadMarker::new().expect("main thread")
-}
-
-fn current_flags(mtm: MainThreadMarker) -> u64 {
-    NSApplication::sharedApplication(mtm).currentEvent().map(|e| e.modifierFlags().0 as u64).unwrap_or(0)
-}
-
 pub fn terminate() {
     NSApplication::sharedApplication(mtm()).terminate(None);
+}
+
+/// ⌘Q: through `applicationShouldTerminate`, which asks if commands are running.
+pub fn request_quit() {
+    terminate();
 }
 
 pub fn about() {
@@ -269,42 +249,34 @@ pub fn bring_all_to_front() {
 // Alerts
 // ---------------------------------------------------------------------------------------------
 
-pub fn alert(title: &str, text: &str) {
-    let a = NSAlert::new(mtm());
-    a.setMessageText(&NSString::from_str(title));
-    a.setInformativeText(&NSString::from_str(text));
-    a.runModal();
-}
-
-/// A question with two buttons; true for the first.
-pub fn ask(title: &str, text: &str, yes: &str, no: &str) -> bool {
-    let a = NSAlert::new(mtm());
-    a.setMessageText(&NSString::from_str(title));
-    a.setInformativeText(&NSString::from_str(text));
-    a.addButtonWithTitle(&NSString::from_str(yes));
-    a.addButtonWithTitle(&NSString::from_str(no));
-    a.runModal() == NSAlertFirstButtonReturn
-}
-
-/// Ask for a line of text.
-pub fn prompt(title: &str, info: &str, default: &str) -> Option<String> {
+/// An alert with buttons and maybe a text field: (button chosen, field text). Runs modally.
+pub fn dialog(title: &str, text: &str, buttons: &[String], field: Option<&str>) -> (Option<usize>, String) {
     let mtm = mtm();
     let a = NSAlert::new(mtm);
     a.setMessageText(&NSString::from_str(title));
-    a.setInformativeText(&NSString::from_str(info));
-    a.addButtonWithTitle(&NSString::from_str("OK"));
-    a.addButtonWithTitle(&NSString::from_str("Cancel"));
-    let field = NSTextField::textFieldWithString(&NSString::from_str(default), mtm);
-    field.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(280.0, 24.0)));
-    a.setAccessoryView(Some(&field));
-    a.window().setInitialFirstResponder(Some(&field));
-    if a.runModal() == NSAlertFirstButtonReturn {
-        let s = field.stringValue().to_string();
-        if !s.trim().is_empty() {
-            return Some(s.trim().to_string());
-        }
+    a.setInformativeText(&NSString::from_str(text));
+    for b in buttons {
+        a.addButtonWithTitle(&NSString::from_str(b));
     }
-    None
+    let tf = field.map(|f| {
+        let tf = NSTextField::textFieldWithString(&NSString::from_str(f), mtm);
+        tf.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(280.0, 24.0)));
+        a.setAccessoryView(Some(&tf));
+        a.window().setInitialFirstResponder(Some(&tf));
+        tf
+    });
+    let r = a.runModal();
+    let chosen = (r - NSAlertFirstButtonReturn) as usize;
+    let text = tf.map(|t| t.stringValue().to_string()).unwrap_or_default();
+    ((chosen < buttons.len()).then_some(chosen), text)
+}
+
+pub fn alert(title: &str, text: &str) {
+    dialog(title, text, &["OK".into()], None);
+}
+
+pub fn ask_native(title: &str, text: &str, yes: &str, no: &str) -> bool {
+    dialog(title, text, &[yes.into(), no.into()], None).0 == Some(0)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -328,18 +300,21 @@ pub fn open_url(url: &str) {
     }
 }
 
-pub fn set_pointing_hand(on: bool) {
-    if on { NSCursor::pointingHandCursor().set() } else { NSCursor::IBeamCursor().set() }
+pub fn open_path(p: &std::path::Path) {
+    let _ = std::process::Command::new("/usr/bin/open").arg("-t").arg(p).spawn();
 }
 
-pub fn start_ticker() -> Retained<NSTimer> {
-    let block = RcBlock::new(|_t: NonNull<NSTimer>| {
-        if with_app(|a| a.tick()).is_none() {
-            later(|a| a.tick());
-        }
-    });
-    unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(0.53, true, &block) }
+pub fn set_cursor(c: Cursor) {
+    match c {
+        Cursor::Arrow => NSCursor::arrowCursor().set(),
+        Cursor::Text => NSCursor::IBeamCursor().set(),
+        Cursor::Pointer => NSCursor::pointingHandCursor().set(),
+        Cursor::Grab => NSCursor::closedHandCursor().set(),
+    }
 }
+
+/// Input methods ask the view for the caret (`firstRectForCharacterRange`).
+pub fn set_ime_area(_v: &Views, _x: f64, _y: f64, _w: f64, _h: f64) {}
 
 // ---------------------------------------------------------------------------------------------
 // Windows
@@ -349,14 +324,8 @@ pub fn start_ticker() -> Retained<NSTimer> {
 pub struct Views {
     pub window: Retained<NSWindow>,
     pub delegate: Retained<WindowDelegate>,
-    pub container: Retained<Container>,
-    pub tabbar: Retained<TabBar>,
-    pub term: Retained<TermView>,
-    pub findbar: Retained<NSView>,
-    pub find_field: Retained<NSSearchField>,
-    pub find_status: Retained<NSTextField>,
-    pub reopen: Retained<NSView>,
-    pub reopen_label: Retained<NSTextField>,
+    pub view: Retained<ContentView>,
+    pub titlebar_tabs: bool,
 }
 
 pub struct WinIvars {
@@ -381,11 +350,12 @@ define_class!(
         }
 
         #[unsafe(method(windowDidResize:))]
-        fn did_resize(&self, _n: &NSNotification) {
-            let n = self.ivars().window.get();
-            if with_app(|a| a.window_resized(n)).is_none() {
-                later(move |a| a.window_resized(n));
+        fn did_resize(&self, n: &NSNotification) {
+            let w = self.ivars().window.get();
+            if let Some(win) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
+                place_traffic_lights(&win);
             }
+            call(move |a| a.window_resized(w));
         }
 
         #[unsafe(method(windowDidMove:))]
@@ -420,42 +390,74 @@ define_class!(
             let w = self.ivars().window.get();
             later(move |a| a.scale_changed(w));
         }
-    }
-);
 
-define_class!(
-    #[unsafe(super(NSView))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "CTXContainer"]
-    pub struct Container;
+        #[unsafe(method(windowDidEnterFullScreen:))]
+        fn entered_full_screen(&self, _n: &NSNotification) {
+            let w = self.ivars().window.get();
+            later(move |a| a.window_full_screen(w, true));
+        }
 
-    impl Container {
-        #[unsafe(method(isFlipped))]
-        fn is_flipped(&self) -> bool {
-            true
+        #[unsafe(method(windowDidExitFullScreen:))]
+        fn exited_full_screen(&self, n: &NSNotification) {
+            let w = self.ivars().window.get();
+            if let Some(win) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
+                place_traffic_lights(&win);
+            }
+            later(move |a| a.window_full_screen(w, false));
         }
     }
 );
 
-pub fn make_window(mtm: MainThreadMarker, n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usize) -> Views {
+/// Centre the red/yellow/green buttons in the tab bar (the title bar is taller than usual).
+fn place_traffic_lights(window: &NSWindow) {
+    if !window.styleMask().contains(NSWindowStyleMask::FullSizeContentView) {
+        return;
+    }
+    let buttons: Vec<Retained<NSButton>> = [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ]
+    .into_iter()
+    .filter_map(|b| window.standardWindowButton(b))
+    .collect();
+    let Some(first) = buttons.first() else { return };
+    // SAFETY: plain view hierarchy reads.
+    let Some(container) = (unsafe { first.superview().and_then(|v| v.superview()) }) else { return };
+    let bar = super::chrome::BAR_H;
+    let mut f = container.frame();
+    f.size.height = bar;
+    f.origin.y = window.frame().size.height - bar;
+    container.setFrame(f);
+    for (i, b) in buttons.iter().enumerate() {
+        let mut bf = b.frame();
+        bf.origin.x = 14.0 + i as f64 * 20.0;
+        bf.origin.y = ((bar - bf.size.height) / 2.0).round();
+        b.setFrameOrigin(bf.origin);
+    }
+}
+
+pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usize, titlebar_tabs: bool) -> Views {
+    let mtm = mtm();
     let content = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(size.0, size.1));
-    let style = NSWindowStyleMask::Titled
+    let mut style = NSWindowStyleMask::Titled
         | NSWindowStyleMask::Closable
         | NSWindowStyleMask::Miniaturizable
         | NSWindowStyleMask::Resizable;
+    if titlebar_tabs {
+        style |= NSWindowStyleMask::FullSizeContentView;
+    }
     let window = unsafe {
-        NSWindow::initWithContentRect_styleMask_backing_defer(
-            NSWindow::alloc(mtm),
-            content,
-            style,
-            NSBackingStoreType::Buffered,
-            false,
-        )
+        NSWindow::initWithContentRect_styleMask_backing_defer(NSWindow::alloc(mtm), content, style, NSBackingStoreType::Buffered, false)
     };
     unsafe { window.setReleasedWhenClosed(false) };
     window.setTabbingMode(NSWindowTabbingMode::Disallowed);
     window.setRestorable(false);
-    window.setContentMinSize(NSSize::new(240.0, 120.0));
+    window.setContentMinSize(NSSize::new(360.0, 160.0));
+    if titlebar_tabs {
+        window.setTitlebarAppearsTransparent(true);
+        window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+    }
     let wdelegate = {
         let this = WindowDelegate::alloc(mtm).set_ivars(WinIvars { window: Cell::new(n) });
         let d: Retained<WindowDelegate> = unsafe { msg_send![super(this), init] };
@@ -473,87 +475,20 @@ pub fn make_window(mtm: MainThreadMarker, n: u64, frame: Option<[f64; 4]>, size:
             }
         }
     }
-    let container: Retained<Container> = unsafe { msg_send![Container::alloc(mtm), initWithFrame: content] };
-    let tabbar = TabBar::new(mtm, n);
-    let term = TermView::new(mtm, n);
-    // Find bar.
-    let findbar = NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO);
-    let find_field = NSSearchField::new(mtm);
-    find_field.setTag(n as isize);
-    if let Some(d) = delegate_obj() {
-        unsafe {
-            find_field.setTarget(Some(&d));
-            find_field.setAction(Some(sel!(findChanged:)));
-            find_field.setDelegate(Some(ProtocolObject::from_ref(&*delegate().unwrap())));
-        }
-    }
-    find_field.setSendsSearchStringImmediately(true);
-    find_field.setPlaceholderString(Some(&NSString::from_str("Find in this tab")));
-    let find_status = NSTextField::labelWithString(&NSString::from_str(""), mtm);
-    let done = unsafe {
-        NSButton::buttonWithTitle_target_action(
-            &NSString::from_str("Done"),
-            delegate_obj().as_deref(),
-            Some(sel!(findDone:)),
-            mtm,
-        )
-    };
-    done.setTag(n as isize);
-    findbar.addSubview(&find_field);
-    findbar.addSubview(&find_status);
-    findbar.addSubview(&done);
-    findbar.setHidden(true);
-    // Reopen bar.
-    let reopen = NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO);
-    let reopen_label = NSTextField::labelWithString(&NSString::from_str(""), mtm);
-    let yes = unsafe {
-        NSButton::buttonWithTitle_target_action(
-            &NSString::from_str("Reopen"),
-            delegate_obj().as_deref(),
-            Some(sel!(reopenAccept:)),
-            mtm,
-        )
-    };
-    yes.setTag(n as isize);
-    let no = unsafe {
-        NSButton::buttonWithTitle_target_action(
-            &NSString::from_str("Not Now"),
-            delegate_obj().as_deref(),
-            Some(sel!(reopenDecline:)),
-            mtm,
-        )
-    };
-    no.setTag(n as isize);
-    reopen.addSubview(&reopen_label);
-    reopen.addSubview(&yes);
-    reopen.addSubview(&no);
-    reopen.setHidden(true);
-    container.addSubview(&tabbar);
-    container.addSubview(&reopen);
-    container.addSubview(&term);
-    container.addSubview(&findbar);
-    window.setContentView(Some(&container));
-    window.makeFirstResponder(Some(&term));
-    Views {
-        window,
-        delegate: wdelegate,
-        container,
-        tabbar,
-        term,
-        findbar,
-        find_field,
-        find_status,
-        reopen,
-        reopen_label,
-    }
-}
-
-fn delegate_obj() -> Option<Retained<AnyObject>> {
-    delegate().map(|d| Retained::into_super(Retained::into_super(d)))
+    let view = ContentView::new(mtm, n);
+    window.setContentView(Some(&view));
+    window.makeFirstResponder(Some(&view));
+    place_traffic_lights(&window);
+    Views { window, delegate: wdelegate, view, titlebar_tabs }
 }
 
 pub fn backing_scale(v: &Views) -> f64 {
     v.window.backingScaleFactor()
+}
+
+pub fn content_size(v: &Views) -> (f64, f64) {
+    let b = v.view.bounds();
+    (b.size.width, b.size.height)
 }
 
 pub fn show_window(v: &Views, activate: bool) {
@@ -606,148 +541,87 @@ pub fn zoom(v: &Views) {
     v.window.zoom(None);
 }
 
-/// Lay out the bars; returns the terminal view's size in points.
-pub fn layout_bars(v: &Views, tab_bar: bool, reopen: bool, find: bool) -> (f64, f64) {
-    let b = v.container.bounds();
-    let (w, h) = (b.size.width, b.size.height);
-    let mut top = 0.0;
-    v.tabbar.setHidden(!tab_bar);
-    if tab_bar {
-        v.tabbar.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(w, super::TAB_BAR_HEIGHT)));
-        top += super::TAB_BAR_HEIGHT;
+/// A double-click on the empty bar does what the person chose in System Settings (zoom by
+/// default, or minimise, or nothing).
+pub fn title_double_click(v: &Views) {
+    let pref = NSUserDefaults::standardUserDefaults().stringForKey(&NSString::from_str("AppleActionOnDoubleClick")).map(|s| s.to_string());
+    match pref.as_deref() {
+        Some("Minimize") => v.window.miniaturize(None),
+        Some("None") => {}
+        _ => v.window.zoom(None),
     }
-    v.reopen.setHidden(!reopen);
-    if reopen {
-        v.reopen.setFrame(NSRect::new(NSPoint::new(0.0, top), NSSize::new(w, super::BAR_HEIGHT)));
-        let subs = v.reopen.subviews();
-        if subs.count() == 3 {
-            subs.objectAtIndex(0)
-                .setFrame(NSRect::new(NSPoint::new(10.0, 6.0), NSSize::new((w - 220.0).max(60.0), 18.0)));
-            subs.objectAtIndex(1).setFrame(NSRect::new(NSPoint::new(w - 200.0, 2.0), NSSize::new(90.0, 26.0)));
-            subs.objectAtIndex(2).setFrame(NSRect::new(NSPoint::new(w - 105.0, 2.0), NSSize::new(95.0, 26.0)));
+}
+
+/// Move the window with the mouse (a press on the empty part of the bar).
+pub fn drag_window(v: &Views) {
+    if let Some(e) = NSApplication::sharedApplication(mtm()).currentEvent()
+        && e.r#type() == NSEventType::LeftMouseDown
+    {
+        v.window.performWindowDragWithEvent(&e);
+    }
+}
+
+/// Room for the red/yellow/green buttons at the left of the bar.
+pub fn titlebar_inset(v: &Views) -> f64 {
+    let full = v.window.styleMask().contains(NSWindowStyleMask::FullScreen);
+    if v.titlebar_tabs && !full { super::chrome::TRAFFIC_LIGHTS } else { 8.0 }
+}
+
+pub fn new_surface(_v: &Views, w: usize, h: usize) -> Option<Surface> {
+    Surface::new_io(w, h)
+}
+
+/// Show the window's IOSurface (the layer reads it directly: no copy).
+pub fn present(v: &Views, s: &Surface, scale: f64) {
+    if let Some(layer) = v.view.layer() {
+        let current = unsafe { layer.contents() };
+        let io = s.io_surface();
+        let same = match (&current, io) {
+            (Some(c), Some(io)) => std::ptr::eq(Retained::as_ptr(c).cast::<u8>(), (io as *const objc2_io_surface::IOSurface).cast()),
+            _ => false,
+        };
+        if !same && let Some(io) = io {
+            layer.setContentsScale(scale);
+            unsafe {
+                layer.setContentsGravity(objc2_quartz_core::kCAGravityTopLeft);
+                layer.setContents(Some(io));
+            }
         }
-        top += super::BAR_HEIGHT;
-    }
-    let mut bottom = 0.0;
-    v.findbar.setHidden(!find);
-    if find {
-        bottom = super::BAR_HEIGHT;
-        v.findbar.setFrame(NSRect::new(NSPoint::new(0.0, h - bottom), NSSize::new(w, bottom)));
-        v.find_field.setFrame(NSRect::new(NSPoint::new(8.0, 4.0), NSSize::new((w - 200.0).clamp(80.0, 360.0), 22.0)));
-        v.find_status
-            .setFrame(NSRect::new(NSPoint::new((w - 200.0).clamp(80.0, 360.0) + 16.0, 7.0), NSSize::new(100.0, 18.0)));
-        let subs = v.findbar.subviews();
-        if subs.count() == 3 {
-            subs.objectAtIndex(2).setFrame(NSRect::new(NSPoint::new(w - 80.0, 2.0), NSSize::new(72.0, 26.0)));
-        }
-    }
-    let th = (h - top - bottom).max(1.0);
-    v.term.setFrame(NSRect::new(NSPoint::new(0.0, top), NSSize::new(w, th)));
-    (w, th)
-}
-
-pub fn term_size(v: &Views) -> (f64, f64) {
-    let b = v.term.bounds();
-    (b.size.width, b.size.height)
-}
-
-pub fn attach_surface(v: &Views, s: &Surface, scale: f64) {
-    if let (Some(layer), Some(io)) = (v.term.layer(), s.io_surface()) {
-        layer.setContentsScale(scale);
-        unsafe {
-            layer.setContentsGravity(objc2_quartz_core::kCAGravityTopLeft);
-            layer.setContents(Some(io));
-        }
-    }
-}
-
-pub fn detach_surface(v: &Views) {
-    if let Some(layer) = v.term.layer() {
-        unsafe { layer.setContents(None) };
-    }
-}
-
-pub fn surface_changed(v: &Views) {
-    if let Some(layer) = v.term.layer() {
         let _: () = unsafe { msg_send![&*layer, setContentsChanged] };
     }
 }
 
-pub fn set_find_status(v: &Views, s: &str) {
-    v.find_status.setStringValue(&NSString::from_str(s));
+/// Give the window's pixels back (covered, minimised, another Space).
+pub fn release(v: &Views) {
+    if let Some(layer) = v.view.layer() {
+        unsafe { layer.setContents(None) };
+    }
 }
 
-pub fn focus_find(v: &Views) {
-    v.window.makeFirstResponder(Some(&v.find_field));
-    unsafe { v.find_field.selectText(None) };
+/// A point in a window's content (points, top-left origin) on the screen (Cocoa coordinates).
+pub fn to_screen(v: &Views, x: f64, y: f64) -> (f64, f64) {
+    let p = v.view.convertPoint_toView(NSPoint::new(x, y), None);
+    let s = v.window.convertPointToScreen(p);
+    (s.x, s.y)
 }
 
-pub fn focus_term(v: &Views) {
-    v.window.makeFirstResponder(Some(&v.term));
-}
-
-pub fn show_reopen_bar(v: &Views, text: &str) {
-    v.reopen_label.setStringValue(&NSString::from_str(text));
-    v.reopen.setHidden(false);
-}
-
-pub fn hide_reopen_bar(v: &Views) {
-    v.reopen.setHidden(true);
-}
-
-/// The frontmost shown window under a screen point, and the point in its terminal view.
-pub fn window_under(app: &App, sx: f64, sy: f64) -> Option<(u64, f64, f64)> {
-    let ordered = NSApplication::sharedApplication(app.mtm).orderedWindows();
+/// The frontmost shown window under a screen point, and the point in its content.
+pub fn window_at(app: &App, sx: f64, sy: f64) -> Option<(u64, f64, f64)> {
+    let ordered = NSApplication::sharedApplication(mtm()).orderedWindows();
     for nsw in ordered.iter() {
-        let Some((n, win)) = app.wins.iter().find(|(_, w)| Retained::as_ptr(&w.views.window) == Retained::as_ptr(&nsw))
-        else {
+        let Some((n, win)) = app.wins.iter().find(|(_, w)| Retained::as_ptr(&w.views.window) == Retained::as_ptr(&nsw)) else {
             continue;
         };
         if !nsw.isVisible() {
             continue;
         }
         let f = nsw.frame();
-        if !(sx >= f.origin.x && sx < f.origin.x + f.size.width && sy >= f.origin.y && sy < f.origin.y + f.size.height)
-        {
+        if !(sx >= f.origin.x && sx < f.origin.x + f.size.width && sy >= f.origin.y && sy < f.origin.y + f.size.height) {
             continue;
         }
         let p = nsw.convertPointFromScreen(NSPoint::new(sx, sy));
-        let lp = win.views.term.convertPoint_fromView(p, None);
-        let b = win.views.term.bounds();
-        if lp.x >= 0.0 && lp.y >= 0.0 && lp.x < b.size.width && lp.y < b.size.height {
-            return Some((*n, lp.x, lp.y));
-        }
-        return None;
-    }
-    None
-}
-
-/// The tab bar under a screen point: window and insertion index.
-pub fn tab_bar_under(app: &App, sx: f64, sy: f64) -> Option<(u64, usize)> {
-    let ordered = NSApplication::sharedApplication(app.mtm).orderedWindows();
-    for nsw in ordered.iter() {
-        let Some((n, win)) = app.wins.iter().find(|(_, w)| Retained::as_ptr(&w.views.window) == Retained::as_ptr(&nsw))
-        else {
-            continue;
-        };
-        let f = nsw.frame();
-        if !(sx >= f.origin.x && sx < f.origin.x + f.size.width && sy >= f.origin.y && sy < f.origin.y + f.size.height)
-        {
-            continue;
-        }
-        if win.views.tabbar.isHidden() {
-            return None;
-        }
-        let p = nsw.convertPointFromScreen(NSPoint::new(sx, sy));
-        let lp = win.views.tabbar.convertPoint_fromView(p, None);
-        let b = win.views.tabbar.bounds();
-        if lp.y >= 0.0 && lp.y < b.size.height && lp.x >= 0.0 && lp.x < b.size.width {
-            let count = win.views.tabbar.ivars().items.borrow().len();
-            let rects = tab_rects(b.size.width, count);
-            let idx = rects.iter().position(|(x, w)| lp.x < x + w / 2.0).unwrap_or(count);
-            return Some((*n, idx));
-        }
-        return None;
+        let lp = win.views.view.convertPoint_fromView(p, None);
+        return Some((*n, lp.x, lp.y));
     }
     None
 }
@@ -782,15 +656,11 @@ fn key_equivalent(keys: &str) -> (String, u64) {
     (k, flags)
 }
 
-fn menu_item(mtm: MainThreadMarker, title: &str, action: Sel, keys: &str, tag: isize) -> Retained<NSMenuItem> {
+fn menu_item(title: &str, action: Sel, keys: &str, tag: isize) -> Retained<NSMenuItem> {
+    let mtm = mtm();
     let (k, flags) = key_equivalent(keys);
     let item = unsafe {
-        NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &NSString::from_str(title),
-            Some(action),
-            &NSString::from_str(&k),
-        )
+        NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(mtm), &NSString::from_str(title), Some(action), &NSString::from_str(&k))
     };
     item.setKeyEquivalentModifierMask(NSEventModifierFlags(flags as usize));
     item.setTag(tag);
@@ -800,9 +670,14 @@ fn menu_item(mtm: MainThreadMarker, title: &str, action: Sel, keys: &str, tag: i
     item
 }
 
+/// A shortcut as macOS writes it (⇧⌘T).
+pub fn shortcut_label(keys: &str) -> String {
+    keys::display(keys)
+}
+
 /// Build the menu bar from the shortcut table. Returns the action for each menu item tag.
 pub fn build_menus(app: &App) -> Vec<Action> {
-    let mtm = app.mtm;
+    let mtm = mtm();
     let main = NSMenu::new(mtm);
     let mut actions = Vec::new();
     for (title, items) in shortcuts::menus() {
@@ -813,7 +688,7 @@ pub fn build_menus(app: &App) -> Vec<Action> {
                 None => menu.addItem(&NSMenuItem::separatorItem(mtm)),
                 Some(e) => {
                     let keys = app.bindings.get(&e.action).cloned().unwrap_or_default();
-                    let item = menu_item(mtm, e.title, sel!(menuAction:), &keys, actions.len() as isize);
+                    let item = menu_item(e.title, sel!(menuAction:), &keys, actions.len() as isize);
                     if e.hidden {
                         item.setHidden(true);
                         item.setAllowsKeyEquivalentWhenHidden(true);
@@ -826,8 +701,8 @@ pub fn build_menus(app: &App) -> Vec<Action> {
         if title == "View" {
             menu.addItem(&NSMenuItem::separatorItem(mtm));
             let themes = NSMenuItem::new(mtm);
-            themes.setTitle(&NSString::from_str("Theme"));
-            let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Theme"));
+            themes.setTitle(&NSString::from_str("Tab Theme"));
+            let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Tab Theme"));
             themes.setSubmenu(Some(&sub));
             menu.addItem(&themes);
         }
@@ -841,22 +716,32 @@ pub fn build_menus(app: &App) -> Vec<Action> {
     actions
 }
 
-const WINDOW_LIST_TAG: isize = 1_000_000;
+/// Marks the Window menu's items for `ctx` windows that aren't shown.
+const WINDOW_ITEM: &str = "ctx-window";
 
 /// Refresh the dynamic parts: `ctx` windows that aren't shown (Window menu), and themes (View).
 pub fn rebuild_window_menu(app: &App) {
-    let mtm = app.mtm;
+    let mtm = mtm();
     let Some(main) = NSApplication::sharedApplication(mtm).mainMenu() else { return };
-    // Window menu: windows the app doesn't show (an Agents window, say).
     if let Some(wm) = main.itemWithTitle(&NSString::from_str("Window")).and_then(|i| i.submenu()) {
-        while let Some(item) = wm.itemWithTag(WINDOW_LIST_TAG) {
-            wm.removeItem(&item);
+        // Remove every item this function added before (they carry the marker), then add the
+        // current ones: rebuilding never duplicates them.
+        let mut i = wm.numberOfItems() - 1;
+        while i >= 0 {
+            if let Some(item) = wm.itemAtIndex(i)
+                && item
+                    .representedObject()
+                    .and_then(|o| o.downcast::<NSString>().ok())
+                    .is_some_and(|s| s.to_string() == WINDOW_ITEM)
+            {
+                wm.removeItem(&item);
+            }
+            i -= 1;
         }
-        let hidden: Vec<&ctx_protocol::WindowInfo> =
-            app.list.windows.iter().filter(|w| !app.wins.contains_key(&w.number)).collect();
+        let hidden: Vec<&ctx_protocol::WindowInfo> = app.list.windows.iter().filter(|w| !app.wins.contains_key(&w.number)).collect();
         if !hidden.is_empty() {
             let sep = NSMenuItem::separatorItem(mtm);
-            sep.setTag(WINDOW_LIST_TAG);
+            unsafe { sep.setRepresentedObject(Some(&NSString::from_str(WINDOW_ITEM))) };
             wm.addItem(&sep);
             for w in hidden {
                 let name = match &w.name {
@@ -864,42 +749,25 @@ pub fn rebuild_window_menu(app: &App) {
                     None => format!("Show Window {}", w.number),
                 };
                 let title = format!("{name} ({} {})", w.tabs.len(), if w.tabs.len() == 1 { "tab" } else { "tabs" });
-                let item = menu_item(mtm, &title, sel!(showCtxWindow:), "", w.number as isize);
-                // The tag identifies the window; mark the item as ours by its represented object.
-                unsafe { item.setRepresentedObject(Some(&NSString::from_str("ctx-window"))) };
+                let item = menu_item(&title, sel!(showCtxWindow:), "", w.number as isize);
+                unsafe { item.setRepresentedObject(Some(&NSString::from_str(WINDOW_ITEM))) };
                 wm.addItem(&item);
-                item.setTag(w.number as isize);
             }
-        }
-        // Remove stale window items (they carry the window number as tag).
-        let count = wm.numberOfItems();
-        let mut i = count - 1;
-        while i >= 0 {
-            if let Some(item) = wm.itemAtIndex(i)
-                && item
-                    .representedObject()
-                    .and_then(|o| o.downcast::<NSString>().ok())
-                    .is_some_and(|s| s.to_string() == "ctx-window")
-                && app.wins.contains_key(&(item.tag() as u64))
-            {
-                wm.removeItem(&item);
-            }
-            i -= 1;
         }
     }
-    // Theme submenu, with the key window's theme checked.
+    // Theme submenu, with the current tab's theme checked.
     if let Some(vm) = main.itemWithTitle(&NSString::from_str("View")).and_then(|i| i.submenu())
-        && let Some(sub) = vm.itemWithTitle(&NSString::from_str("Theme")).and_then(|i| i.submenu())
+        && let Some(sub) = vm.itemWithTitle(&NSString::from_str("Tab Theme")).and_then(|i| i.submenu())
     {
         sub.removeAllItems();
         let current = app
             .key_window()
-            .and_then(|w| app.wins.get(&w))
-            .and_then(|w| w.theme_name.clone())
+            .and_then(|w| app.focused_tab(w))
+            .and_then(|t| app.state.tab_themes.get(&t).cloned())
             .unwrap_or_else(|| app.loaded.app.theme.clone());
         for name in crate::theme::available(&app.themes_dir) {
-            let title = if name == "system" { "System (light or dark)".to_string() } else { name.clone() };
-            let item = menu_item(mtm, &title, sel!(setTheme:), "", 0);
+            let title = if name == "system" { "System (Basic, light or dark)".to_string() } else { name.clone() };
+            let item = menu_item(&title, sel!(setTheme:), "", 0);
             unsafe { item.setRepresentedObject(Some(&NSString::from_str(&name))) };
             item.setState(if name == current { NSControlStateValueOn } else { NSControlStateValueOff });
             sub.addItem(&item);
@@ -908,10 +776,10 @@ pub fn rebuild_window_menu(app: &App) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The terminal view
+// The content view
 // ---------------------------------------------------------------------------------------------
 
-pub struct TermIvars {
+pub struct ViewIvars {
     pub window: Cell<u64>,
     tracking: RefCell<Option<Retained<NSTrackingArea>>>,
 }
@@ -947,16 +815,27 @@ fn button_of(e: &NSEvent) -> u8 {
 define_class!(
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
-    #[name = "CTXTermView"]
-    #[ivars = TermIvars]
-    pub struct TermView;
+    #[name = "CTXContentView"]
+    #[ivars = ViewIvars]
+    pub struct ContentView;
 
-    unsafe impl NSObjectProtocol for TermView {}
+    unsafe impl NSObjectProtocol for ContentView {}
 
-    impl TermView {
+    impl ContentView {
         #[unsafe(method(isFlipped))]
         fn is_flipped(&self) -> bool {
             true
+        }
+
+        #[unsafe(method(isOpaque))]
+        fn is_opaque(&self) -> bool {
+            true
+        }
+
+        /// The bar decides where a press moves the window (empty space only).
+        #[unsafe(method(mouseDownCanMoveWindow))]
+        fn can_move_window(&self) -> bool {
+            false
         }
 
         #[unsafe(method(acceptsFirstResponder))]
@@ -998,7 +877,7 @@ define_class!(
             let w = self.ivars().window.get();
             let flags = e.modifierFlags().0 as u64;
             let loc = self.convertPoint_fromView(self.window().map(|win| win.mouseLocationOutsideOfEventStream()).unwrap_or(NSPoint::ZERO), None);
-            later(move |a| a.mouse_moved(w, loc.x, loc.y, flags));
+            call(move |a| a.mouse_moved(w, loc.x, loc.y, flags));
         }
 
         #[unsafe(method(mouseDown:))]
@@ -1010,7 +889,7 @@ define_class!(
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let clicks = e.clickCount();
             let flags = e.modifierFlags().0 as u64;
-            later(move |a| a.mouse_down(w, p.x, p.y, clicks, flags, 1));
+            call(move |a| a.mouse_down(w, p.x, p.y, clicks, flags, 1));
         }
 
         #[unsafe(method(mouseDragged:))]
@@ -1018,9 +897,7 @@ define_class!(
             let w = self.ivars().window.get();
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let flags = e.modifierFlags().0 as u64;
-            if with_app(|a| a.mouse_dragged(w, p.x, p.y, flags, 1)).is_none() {
-                later(move |a| a.mouse_dragged(w, p.x, p.y, flags, 1));
-            }
+            call(move |a| a.mouse_dragged(w, p.x, p.y, flags, 1));
         }
 
         #[unsafe(method(mouseUp:))]
@@ -1028,7 +905,7 @@ define_class!(
             let w = self.ivars().window.get();
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let flags = e.modifierFlags().0 as u64;
-            later(move |a| a.mouse_up(w, p.x, p.y, flags, 1));
+            call(move |a| a.mouse_up(w, p.x, p.y, flags, 1));
         }
 
         #[unsafe(method(rightMouseDown:))]
@@ -1036,22 +913,7 @@ define_class!(
             let w = self.ivars().window.get();
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let flags = e.modifierFlags().0 as u64;
-            let tracking = with_app(|a| {
-                a.hit(w, p.x, p.y).and_then(|(t, ..)| a.views.get(&t)).is_some_and(|v| v.screen.mouse_tracking)
-            })
-            .unwrap_or(false);
-            if tracking && flags & keys::OPTION == 0 {
-                later(move |a| a.mouse_down(w, p.x, p.y, 1, flags, 2));
-                return;
-            }
-            // A small menu: Copy, Paste.
-            let mtm = self.mtm();
-            let menu = NSMenu::new(mtm);
-            let copy = menu_item(mtm, "Copy", sel!(menuAction:), "", action_tag(Action::Copy));
-            let paste = menu_item(mtm, "Paste", sel!(menuAction:), "", action_tag(Action::Paste));
-            menu.addItem(&copy);
-            menu.addItem(&paste);
-            NSMenu::popUpContextMenu_withEvent_forView(&menu, e, self);
+            call(move |a| a.mouse_down(w, p.x, p.y, 1, flags, 2));
         }
 
         #[unsafe(method(rightMouseUp:))]
@@ -1059,7 +921,7 @@ define_class!(
             let w = self.ivars().window.get();
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let flags = e.modifierFlags().0 as u64;
-            later(move |a| a.mouse_up(w, p.x, p.y, flags, 2));
+            call(move |a| a.mouse_up(w, p.x, p.y, flags, 2));
         }
 
         #[unsafe(method(otherMouseDown:))]
@@ -1068,7 +930,7 @@ define_class!(
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let flags = e.modifierFlags().0 as u64;
             let b = button_of(e);
-            later(move |a| a.mouse_down(w, p.x, p.y, 1, flags, b));
+            call(move |a| a.mouse_down(w, p.x, p.y, 1, flags, b));
         }
 
         #[unsafe(method(otherMouseUp:))]
@@ -1077,7 +939,7 @@ define_class!(
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let flags = e.modifierFlags().0 as u64;
             let b = button_of(e);
-            later(move |a| a.mouse_up(w, p.x, p.y, flags, b));
+            call(move |a| a.mouse_up(w, p.x, p.y, flags, b));
         }
 
         #[unsafe(method(mouseMoved:))]
@@ -1085,7 +947,13 @@ define_class!(
             let w = self.ivars().window.get();
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let flags = e.modifierFlags().0 as u64;
-            later(move |a| a.mouse_moved(w, p.x, p.y, flags));
+            call(move |a| a.mouse_moved(w, p.x, p.y, flags));
+        }
+
+        #[unsafe(method(mouseExited:))]
+        fn mouse_exited(&self, _e: &NSEvent) {
+            let w = self.ivars().window.get();
+            call(move |a| a.mouse_exited(w));
         }
 
         #[unsafe(method(scrollWheel:))]
@@ -1094,10 +962,8 @@ define_class!(
             let p = self.convertPoint_fromView(e.locationInWindow(), None);
             let flags = e.modifierFlags().0 as u64;
             let precise = e.hasPreciseScrollingDeltas();
-            let dy = e.scrollingDeltaY();
-            if with_app(|a| a.scroll_event(w, p.x, p.y, dy, precise, flags)).is_none() {
-                later(move |a| a.scroll_event(w, p.x, p.y, dy, precise, flags));
-            }
+            let (dx, dy) = (e.scrollingDeltaX(), e.scrollingDeltaY());
+            call(move |a| a.scroll_event(w, p.x, p.y, dx, dy, precise, flags));
         }
 
         #[unsafe(method(updateTrackingAreas))]
@@ -1106,9 +972,9 @@ define_class!(
                 self.removeTrackingArea(&old);
             }
             let opts = NSTrackingAreaOptions::MouseMoved
+                | NSTrackingAreaOptions::MouseEnteredAndExited
                 | NSTrackingAreaOptions::ActiveInKeyWindow
-                | NSTrackingAreaOptions::InVisibleRect
-                | NSTrackingAreaOptions::CursorUpdate;
+                | NSTrackingAreaOptions::InVisibleRect;
             let area = unsafe {
                 NSTrackingArea::initWithRect_options_owner_userInfo(NSTrackingArea::alloc(), NSRect::ZERO, opts, Some(self), None)
             };
@@ -1117,14 +983,9 @@ define_class!(
             let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
         }
 
-        #[unsafe(method(cursorUpdate:))]
-        fn cursor_update(&self, _e: &NSEvent) {
-            NSCursor::IBeamCursor().set();
-        }
-
         #[unsafe(method(viewDidChangeEffectiveAppearance))]
         fn appearance_changed(&self) {
-            let dark = system_is_dark(self.mtm());
+            let dark = system_is_dark();
             later(move |a| a.appearance_changed(dark));
         }
 
@@ -1134,34 +995,33 @@ define_class!(
         }
     }
 
-    unsafe impl NSTextInputClient for TermView {
+    unsafe impl NSTextInputClient for ContentView {
         #[unsafe(method(insertText:replacementRange:))]
         fn insert_text(&self, string: &AnyObject, _r: NSRange) {
             let w = self.ivars().window.get();
             let s = string_of(string);
-            if with_app(|a| a.insert_text(w, &s)).is_none() {
-                later(move |a| a.insert_text(w, &s));
-            }
+            call(move |a| a.insert_text(w, &s));
         }
 
         #[unsafe(method(doCommandBySelector:))]
         fn do_command(&self, sel: Sel) {
             let w = self.ivars().window.get();
-            let key = if sel == sel!(insertNewline:) {
-                "enter"
+            // Keys text input didn't turn into text: as presses, so they reach whatever has the
+            // keyboard (the terminal, a field).
+            let code = if sel == sel!(insertNewline:) {
+                36
             } else if sel == sel!(insertTab:) {
-                "tab"
+                48
             } else if sel == sel!(deleteBackward:) {
-                "backspace"
+                51
             } else if sel == sel!(cancelOperation:) {
-                "escape"
+                53
             } else {
                 return;
             };
-            later(move |a| {
-                if let Some(t) = a.focused_tab(w) {
-                    a.input(t, ctx_protocol::AppInput::Key { key: key.into(), text: None });
-                }
+            let p = Press { keycode: code, chars: String::new(), chars_ignoring: String::new(), flags: 0 };
+            call(move |a| {
+                a.key_down(w, &p);
             });
         }
 
@@ -1169,15 +1029,13 @@ define_class!(
         fn set_marked_text(&self, string: &AnyObject, _sel: NSRange, _rep: NSRange) {
             let w = self.ivars().window.get();
             let s = string_of(string);
-            if with_app(|a| a.set_marked(w, Some(s.clone()))).is_none() {
-                later(move |a| a.set_marked(w, Some(s)));
-            }
+            call(move |a| a.set_marked(w, Some(s)));
         }
 
         #[unsafe(method(unmarkText))]
         fn unmark_text(&self) {
             let w = self.ivars().window.get();
-            later(move |a| a.set_marked(w, None));
+            call(move |a| a.set_marked(w, None));
         }
 
         #[unsafe(method(selectedRange))]
@@ -1235,7 +1093,7 @@ define_class!(
         }
     }
 
-    unsafe impl NSDraggingDestination for TermView {
+    unsafe impl NSDraggingDestination for ContentView {
         #[unsafe(method(draggingEntered:))]
         fn dragging_entered(&self, _s: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
             NSDragOperation::Copy
@@ -1252,11 +1110,8 @@ fn dropped_files(w: u64, s: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
     let pb = s.draggingPasteboard();
     let classes = NSArray::from_slice(&[NSURL::class()]);
     let Some(items) = (unsafe { pb.readObjectsForClasses_options(&classes, None) }) else { return false };
-    let paths: Vec<String> = items
-        .iter()
-        .filter_map(|o| o.downcast::<NSURL>().ok())
-        .filter_map(|u| u.path().map(|p| p.to_string()))
-        .collect();
+    let paths: Vec<String> =
+        items.iter().filter_map(|o| o.downcast::<NSURL>().ok()).filter_map(|u| u.path().map(|p| p.to_string())).collect();
     if paths.is_empty() {
         return false;
     }
@@ -1264,419 +1119,14 @@ fn dropped_files(w: u64, s: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
     true
 }
 
-fn action_tag(action: Action) -> isize {
-    with_app(|a| a.menu_actions.iter().position(|x| *x == action)).flatten().map(|i| i as isize).unwrap_or(-1)
-}
-
-impl TermView {
+impl ContentView {
     fn new(mtm: MainThreadMarker, window: u64) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(TermIvars { window: Cell::new(window), tracking: RefCell::new(None) });
+        let this = Self::alloc(mtm).set_ivars(ViewIvars { window: Cell::new(window), tracking: RefCell::new(None) });
         let v: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
         v.setWantsLayer(true);
         v.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::Never);
         let types = NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }]);
         v.registerForDraggedTypes(&types);
         v
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// The tab bar
-// ---------------------------------------------------------------------------------------------
-
-/// What the tab bar shows for one tab.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TabItem {
-    pub tab: u64,
-    pub label: String,
-    pub title: Option<String>,
-    /// Opened by an agent: its name.
-    pub agent: Option<String>,
-    /// Runs with a scoped launcher's permissions.
-    pub launcher: Option<String>,
-    /// Another client touched it recently: true if it typed, false if it only read.
-    pub badge: Option<bool>,
-    pub selected: bool,
-    pub tiled: bool,
-    pub busy: bool,
-}
-
-struct BarPress {
-    index: usize,
-    start: NSPoint,
-    dragging: bool,
-}
-
-pub struct TabBarIvars {
-    window: Cell<u64>,
-    items: RefCell<Vec<TabItem>>,
-    dark: Cell<bool>,
-    hover: Cell<Option<usize>>,
-    press: RefCell<Option<BarPress>>,
-    tracking: RefCell<Option<Retained<NSTrackingArea>>>,
-    drag_x: Cell<Option<f64>>,
-}
-
-/// Each tab's x and width.
-pub fn tab_rects(width: f64, n: usize) -> Vec<(f64, f64)> {
-    if n == 0 {
-        return Vec::new();
-    }
-    let w = ((width - 8.0) / n as f64).clamp(40.0, 240.0);
-    (0..n).map(|i| (4.0 + i as f64 * w, w)).collect()
-}
-
-fn color(rgb: (f64, f64, f64), a: f64) -> Retained<NSColor> {
-    NSColor::colorWithSRGBRed_green_blue_alpha(rgb.0, rgb.1, rgb.2, a)
-}
-
-define_class!(
-    #[unsafe(super(NSView))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "CTXTabBar"]
-    #[ivars = TabBarIvars]
-    pub struct TabBar;
-
-    unsafe impl NSObjectProtocol for TabBar {}
-
-    impl TabBar {
-        #[unsafe(method(isFlipped))]
-        fn is_flipped(&self) -> bool {
-            true
-        }
-
-        #[unsafe(method(acceptsFirstMouse:))]
-        fn accepts_first_mouse(&self, _e: Option<&NSEvent>) -> bool {
-            true
-        }
-
-        #[unsafe(method(drawRect:))]
-        fn draw_rect(&self, _r: NSRect) {
-            self.draw();
-        }
-
-        #[unsafe(method(mouseDown:))]
-        fn mouse_down(&self, e: &NSEvent) {
-            let p = self.convertPoint_fromView(e.locationInWindow(), None);
-            let Some(i) = self.index_at(p.x) else { return };
-            let items = self.ivars().items.borrow().clone();
-            let Some(item) = items.get(i).cloned() else { return };
-            let w = self.ivars().window.get();
-            // The close button.
-            let rects = tab_rects(self.bounds().size.width, items.len());
-            let (x, _) = rects[i];
-            if self.ivars().hover.get() == Some(i) && p.x < x + 20.0 {
-                later(move |a| a.close_tab(item.tab, false));
-                return;
-            }
-            if e.clickCount() == 2 {
-                let current = item.label.split(" — ").next().unwrap_or("").to_string();
-                let current = if item.label.contains(" — ") { current } else { String::new() };
-                let t = item.tab;
-                super::outside(move || {
-                    if let Some(name) = prompt("Rename tab", "Letters, digits, spaces, - and _.", &current) {
-                        later(move |a| a.rename_tab(t, name));
-                    }
-                });
-                return;
-            }
-            *self.ivars().press.borrow_mut() = Some(BarPress { index: i, start: p, dragging: false });
-            later(move |a| a.select_tab(w, item.tab));
-        }
-
-        #[unsafe(method(mouseDragged:))]
-        fn mouse_dragged(&self, e: &NSEvent) {
-            let p = self.convertPoint_fromView(e.locationInWindow(), None);
-            let mut press = self.ivars().press.borrow_mut();
-            let Some(pr) = press.as_mut() else { return };
-            if !pr.dragging && ((p.x - pr.start.x).abs() > 4.0 || (p.y - pr.start.y).abs() > 4.0) {
-                pr.dragging = true;
-                NSCursor::closedHandCursor().set();
-            }
-            if pr.dragging {
-                self.ivars().drag_x.set(Some(p.x));
-                self.setNeedsDisplay(true);
-                let screen = NSEvent::mouseLocation();
-                later(move |a| a.drag_hint(screen.x, screen.y));
-            }
-        }
-
-        #[unsafe(method(mouseUp:))]
-        fn mouse_up(&self, _e: &NSEvent) {
-            let press = self.ivars().press.borrow_mut().take();
-            self.ivars().drag_x.set(None);
-            self.setNeedsDisplay(true);
-            NSCursor::arrowCursor().set();
-            let Some(pr) = press else { return };
-            if !pr.dragging {
-                return;
-            }
-            let Some(item) = self.ivars().items.borrow().get(pr.index).cloned() else { return };
-            let w = self.ivars().window.get();
-            let screen = NSEvent::mouseLocation();
-            later(move |a| {
-                let bar = tab_bar_under(a, screen.x, screen.y);
-                // Dropping onto its own place changes nothing.
-                let bar = bar.map(|(bw, idx)| if bw == w && idx > pr.index { (bw, idx - 1) } else { (bw, idx) });
-                if bar == Some((w, pr.index)) {
-                    for win in a.wins.values_mut() {
-                        if win.drop_hint.take().is_some() {
-                            win.dirty = Some(super::Dirty::All);
-                        }
-                    }
-                    a.redraw_dirty();
-                    return;
-                }
-                a.drop_tab(item.tab, w, screen.x, screen.y, bar);
-            });
-        }
-
-        #[unsafe(method(rightMouseDown:))]
-        fn right_mouse_down(&self, e: &NSEvent) {
-            let p = self.convertPoint_fromView(e.locationInWindow(), None);
-            let Some(i) = self.index_at(p.x) else { return };
-            let Some(item) = self.ivars().items.borrow().get(i).cloned() else { return };
-            let mtm = self.mtm();
-            let menu = NSMenu::new(mtm);
-            let t = item.tab as isize;
-            menu.addItem(&menu_item(mtm, "Rename Tab…", sel!(tabRename:), "", t));
-            if item.tiled {
-                menu.addItem(&menu_item(mtm, "Stop Showing Side by Side", sel!(tabUntile:), "", t));
-            } else if !item.selected {
-                menu.addItem(&menu_item(mtm, "Show Side by Side", sel!(tabTile:), "", t));
-            }
-            menu.addItem(&menu_item(mtm, "Move to New Window", sel!(tabNewWindow:), "", t));
-            menu.addItem(&NSMenuItem::separatorItem(mtm));
-            menu.addItem(&menu_item(mtm, "Close Tab", sel!(tabClose:), "", t));
-            NSMenu::popUpContextMenu_withEvent_forView(&menu, e, self);
-        }
-
-        #[unsafe(method(mouseMoved:))]
-        fn mouse_moved(&self, e: &NSEvent) {
-            let p = self.convertPoint_fromView(e.locationInWindow(), None);
-            let i = self.index_at(p.x);
-            if self.ivars().hover.get() != i {
-                self.ivars().hover.set(i);
-                let tip = i.and_then(|i| self.ivars().items.borrow().get(i).cloned()).map(|it| {
-                    let mut s = it.label.clone();
-                    if let Some(t) = &it.title {
-                        s.push_str(&format!("\n{t}"));
-                    }
-                    if let Some(a) = &it.agent {
-                        s.push_str(&format!("\nOpened by {a}"));
-                    }
-                    if let Some(l) = &it.launcher {
-                        s.push_str(&format!("\nRunning with the permissions of {l}"));
-                    }
-                    match it.badge {
-                        Some(true) => s.push_str("\nAnother program typed here in the last minute (⇧⌘A shows what)"),
-                        Some(false) => s.push_str("\nAnother program read this tab in the last minute (⇧⌘A shows what)"),
-                        None => {}
-                    }
-                    s
-                });
-                self.setToolTip(tip.map(|t| NSString::from_str(&t)).as_deref());
-                self.setNeedsDisplay(true);
-            }
-        }
-
-        #[unsafe(method(mouseExited:))]
-        fn mouse_exited(&self, _e: &NSEvent) {
-            self.ivars().hover.set(None);
-            self.setNeedsDisplay(true);
-        }
-
-        #[unsafe(method(updateTrackingAreas))]
-        fn update_tracking_areas(&self) {
-            if let Some(old) = self.ivars().tracking.borrow_mut().take() {
-                self.removeTrackingArea(&old);
-            }
-            let opts = NSTrackingAreaOptions::MouseMoved
-                | NSTrackingAreaOptions::MouseEnteredAndExited
-                | NSTrackingAreaOptions::ActiveAlways
-                | NSTrackingAreaOptions::InVisibleRect;
-            let area = unsafe {
-                NSTrackingArea::initWithRect_options_owner_userInfo(NSTrackingArea::alloc(), NSRect::ZERO, opts, Some(self), None)
-            };
-            self.addTrackingArea(&area);
-            *self.ivars().tracking.borrow_mut() = Some(area);
-            let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
-        }
-    }
-);
-
-impl TabBar {
-    fn new(mtm: MainThreadMarker, window: u64) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(TabBarIvars {
-            window: Cell::new(window),
-            items: RefCell::new(Vec::new()),
-            dark: Cell::new(false),
-            hover: Cell::new(None),
-            press: RefCell::new(None),
-            tracking: RefCell::new(None),
-            drag_x: Cell::new(None),
-        });
-        let v: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
-        v.setWantsLayer(true);
-        v
-    }
-
-    fn index_at(&self, x: f64) -> Option<usize> {
-        let n = self.ivars().items.borrow().len();
-        tab_rects(self.bounds().size.width, n).iter().position(|(rx, w)| x >= *rx && x < rx + w)
-    }
-
-    fn draw(&self) {
-        let b = self.bounds();
-        let dark = self.ivars().dark.get();
-        let items = self.ivars().items.borrow();
-        let bg = if dark { (0.16, 0.16, 0.17) } else { (0.88, 0.88, 0.89) };
-        let sel_bg = if dark { (0.25, 0.25, 0.27) } else { (0.98, 0.98, 0.98) };
-        let fg = if dark { (0.92, 0.92, 0.92) } else { (0.12, 0.12, 0.12) };
-        let dim = if dark { (0.6, 0.6, 0.62) } else { (0.42, 0.42, 0.44) };
-        color(bg, 1.0).setFill();
-        NSRectFill(b);
-        // Bottom edge.
-        color(if dark { (0.08, 0.08, 0.08) } else { (0.72, 0.72, 0.74) }, 1.0).setFill();
-        NSRectFill(NSRect::new(NSPoint::new(0.0, b.size.height - 1.0), NSSize::new(b.size.width, 1.0)));
-        let rects = tab_rects(b.size.width, items.len());
-        let hover = self.ivars().hover.get();
-        let dragging = self.ivars().press.borrow().as_ref().filter(|p| p.dragging).map(|p| p.index);
-        let font = NSFont::systemFontOfSize(12.0);
-        let small = NSFont::systemFontOfSize(10.0);
-        for (i, item) in items.iter().enumerate() {
-            let (mut x, w) = rects[i];
-            if dragging == Some(i)
-                && let Some(dx) = self.ivars().drag_x.get()
-            {
-                x = dx - w / 2.0;
-            }
-            let r = NSRect::new(NSPoint::new(x + 1.0, 3.0), NSSize::new(w - 2.0, b.size.height - 6.0));
-            if item.selected || item.tiled || hover == Some(i) {
-                let c = if item.selected {
-                    sel_bg
-                } else if item.tiled {
-                    mix(bg, sel_bg, 0.6)
-                } else {
-                    mix(bg, sel_bg, 0.4)
-                };
-                color(c, 1.0).setFill();
-                NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(r, 5.0, 5.0).fill();
-            }
-            let mut left = x + 10.0;
-            let mut right = x + w - 8.0;
-            // Close button on hover.
-            if hover == Some(i) {
-                draw_text(
-                    "×",
-                    NSRect::new(NSPoint::new(x + 6.0, 5.0), NSSize::new(12.0, 18.0)),
-                    &font,
-                    color(dim, 1.0),
-                    false,
-                );
-                left = x + 20.0;
-            }
-            // Activity badge: a dot, filled orange for "typed", hollow blue for "read only".
-            if let Some(typed) = item.badge {
-                let d = NSRect::new(NSPoint::new(right - 8.0, b.size.height / 2.0 - 4.0), NSSize::new(8.0, 8.0));
-                let path = NSBezierPath::bezierPathWithOvalInRect(d);
-                if typed {
-                    color((0.95, 0.55, 0.1), 1.0).setFill();
-                    path.fill();
-                } else {
-                    color((0.25, 0.55, 0.95), 1.0).setStroke();
-                    path.setLineWidth(1.5);
-                    path.stroke();
-                }
-                right -= 14.0;
-            }
-            // Agent marker and launcher marker.
-            for (tag, c) in [(&item.agent, (0.45, 0.35, 0.85)), (&item.launcher, (0.15, 0.6, 0.45))] {
-                if let Some(name) = tag {
-                    let text = if c.1 > 0.5 { format!("⚿ {name}") } else { name.clone() };
-                    let tw = (text.chars().count() as f64 * 6.0 + 10.0).min(w * 0.4);
-                    if right - tw > left + 20.0 {
-                        let pr =
-                            NSRect::new(NSPoint::new(right - tw, b.size.height / 2.0 - 7.0), NSSize::new(tw, 14.0));
-                        color(c, 0.18).setFill();
-                        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(pr, 4.0, 4.0).fill();
-                        draw_text(
-                            &text,
-                            NSRect::new(NSPoint::new(pr.origin.x + 4.0, pr.origin.y), NSSize::new(tw - 6.0, 14.0)),
-                            &small,
-                            color(c, 1.0),
-                            false,
-                        );
-                        right -= tw + 4.0;
-                    }
-                }
-            }
-            // The name stays whole; the folder is shortened from the left ("…code/site").
-            let c = color(if item.selected { fg } else { dim }, 1.0);
-            let avail = (right - left).max(10.0);
-            let busy = if item.busy { " ●" } else { "" };
-            match item.label.split_once(" — ") {
-                Some((name, folder)) => {
-                    let name = format!("{name}{busy} — ");
-                    let nw = text_width(&name, &font).min(avail * 0.7);
-                    draw_text(
-                        &name,
-                        NSRect::new(NSPoint::new(left, 6.0), NSSize::new(nw, 17.0)),
-                        &font,
-                        c.clone(),
-                        false,
-                    );
-                    let fr = NSRect::new(NSPoint::new(left + nw, 6.0), NSSize::new((avail - nw).max(1.0), 17.0));
-                    draw_text(folder, fr, &font, color(dim, 1.0), true);
-                }
-                None => {
-                    let tr = NSRect::new(NSPoint::new(left, 6.0), NSSize::new(avail, 17.0));
-                    draw_text(&format!("{}{busy}", item.label), tr, &font, c, true);
-                }
-            }
-        }
-    }
-}
-
-fn mix(a: (f64, f64, f64), b: (f64, f64, f64), t: f64) -> (f64, f64, f64) {
-    (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t)
-}
-
-/// Draw a line of text; `truncate_head` shortens it from the left ("…code/site").
-fn draw_text(s: &str, r: NSRect, font: &NSFont, color: Retained<NSColor>, truncate_head: bool) {
-    let style = NSMutableParagraphStyle::new();
-    style.setLineBreakMode(if truncate_head { NSLineBreakMode::ByTruncatingHead } else { NSLineBreakMode::ByClipping });
-    let keys: [&NSAttributedStringKey; 3] =
-        unsafe { [NSFontAttributeName, NSForegroundColorAttributeName, NSParagraphStyleAttributeName] };
-    let vals: [&AnyObject; 3] = [font.as_ref(), color.as_ref(), style.as_ref()];
-    let attrs = NSDictionary::from_slices(&keys, &vals);
-    unsafe { NSString::from_str(s).drawInRect_withAttributes(r, Some(&attrs)) };
-}
-
-fn text_width(s: &str, font: &NSFont) -> f64 {
-    let keys: [&NSAttributedStringKey; 1] = unsafe { [NSFontAttributeName] };
-    let vals: [&AnyObject; 1] = [font.as_ref()];
-    let attrs = NSDictionary::from_slices(&keys, &vals);
-    unsafe { NSString::from_str(s).sizeWithAttributes(Some(&attrs)) }.width.ceil()
-}
-
-pub fn set_tab_items(v: &Views, items: Vec<TabItem>, dark: bool) {
-    let iv = v.tabbar.ivars();
-    let changed = *iv.items.borrow() != items || iv.dark.get() != dark;
-    if changed {
-        *iv.items.borrow_mut() = items;
-        iv.dark.set(dark);
-        v.tabbar.setNeedsDisplay(true);
-    }
-}
-
-/// Save a view's drawing as a PNG (debugging and tests; needs no screen-recording permission).
-pub fn dump_view(view: &NSView, path: &std::path::Path) {
-    let b = view.bounds();
-    let Some(rep) = view.bitmapImageRepForCachingDisplayInRect(b) else { return };
-    view.cacheDisplayInRect_toBitmapImageRep(b, &rep);
-    let props = NSDictionary::new();
-    if let Some(data) = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) } {
-        let _ = std::fs::write(path, data.to_vec());
     }
 }

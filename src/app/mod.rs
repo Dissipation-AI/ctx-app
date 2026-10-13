@@ -76,6 +76,28 @@ pub fn later(f: impl FnOnce(&mut App) + 'static) {
     plat::post(Box::new(flush_deferred));
 }
 
+/// Call into the app for an event from the window system: now, if the app is free and nothing
+/// is queued before this, else after what's queued. Every event goes through here, so a drag is
+/// never handled before the press that started it.
+pub fn call(f: impl FnOnce(&mut App) + 'static) {
+    let queued = DEFERRED.with(|d| !d.borrow().is_empty());
+    if queued {
+        later(f);
+        return;
+    }
+    let cell = RefCell::new(Some(f));
+    if with_app(|a| {
+        if let Some(f) = cell.borrow_mut().take() {
+            f(a)
+        }
+    })
+    .is_none()
+        && let Some(f) = cell.into_inner()
+    {
+        later(f);
+    }
+}
+
 /// Run every deferred job the app is free for.
 pub fn flush_deferred() {
     loop {

@@ -144,9 +144,9 @@ pub fn first_run_then(then: impl FnOnce() + 'static) {
     // A test or trial setup (CTX_HOME) never touches launchd or your PATH.
     if bundle().is_some() && !ctx_protocol::config::Paths::is_custom() {
         if let Err(e) = register_agent() {
-            super::cocoa::alert("The ctx server isn't allowed to run yet", &e);
+            super::alert("The ctx server isn't allowed to run yet", &e);
         }
-        let set_up = super::with_app(|a| a.state.set_up).unwrap_or(true);
+        let set_up = super::super::with_app(|a| a.state.set_up).unwrap_or(true);
         if !set_up {
             let missing: Vec<(&str, PathBuf)> = ["ctx", "bro"]
                 .into_iter()
@@ -163,14 +163,14 @@ pub fn first_run_then(then: impl FnOnce() + 'static) {
                     link_dir().display(),
                     if names.len() == 1 { "it" } else { "them" }
                 );
-                if super::cocoa::ask("Install the command-line tools?", &q, "Install", "Not Now") {
+                if super::ask_native("Install the command-line tools?", &q, "Install", "Not Now") {
                     match install_tools(&missing) {
-                        Ok(m) => super::cocoa::alert("Command-line tools installed", &m),
-                        Err(e) => super::cocoa::alert("Couldn't install the command-line tools", &e),
+                        Ok(m) => super::alert("Command-line tools installed", &m),
+                        Err(e) => super::alert("Couldn't install the command-line tools", &e),
                     }
                 }
             }
-            super::with_app(|a| {
+            super::super::with_app(|a| {
                 a.state.set_up = true;
                 a.save_state();
             });

@@ -689,7 +689,7 @@ mod tests {
     fn history_filters() {
         let mut p = Panel::new(Kind::History);
         let now = ctx_protocol::time::now_ms();
-        let iso = |ms: i64| ctx_protocol::time::iso(ms);
+        let iso = |ms: i64| ctx_protocol::time::iso_utc(ms);
         p.closed = vec![
             closed(1, "deploy", "you", &iso(now - 3_600_000)),
             closed(2, "auth refactor", "claude (pid 9)", &iso(now - 3 * 86_400_000)),

@@ -318,6 +318,12 @@ impl Surface {
         let vals: Vec<&objc2::runtime::AnyObject> = vals.iter().map(|v| v.as_ref()).collect();
         let dict = NSDictionary::<NSString, objc2::runtime::AnyObject>::from_slices(&keys, &vals);
         let io = IOSurface::initWithProperties(IOSurface::alloc(), &dict)?;
+        // Tell the compositor the pixels are sRGB (what we draw in), so colours aren't
+        // stretched to the display's wider gamut.
+        unsafe {
+            let srgb: &NSString = &*(objc2_core_graphics::kCGColorSpaceSRGB as *const objc2_core_foundation::CFString).cast::<NSString>();
+            io.setAttachment_forKey(srgb, &NSString::from_str("IOSurfaceColorSpace"));
+        }
         Some(Surface { backing: Backing::Io(io), width: w, height: h })
     }
 
@@ -454,7 +460,7 @@ mod png {
             let w = objc2_core_graphics::CGImage::width(Some(&*img));
             let h = objc2_core_graphics::CGImage::height(Some(&*img));
             let mut px = vec![0u8; w * h * 4];
-            let cs = CGColorSpace::with_name(Some(objc2_core_graphics::kCGColorSpaceSRGB));
+            let cs = objc2_core_graphics::CGColorSpace::with_name(Some(objc2_core_graphics::kCGColorSpaceSRGB));
             let ctx = objc2_core_graphics::CGBitmapContextCreate(
                 px.as_mut_ptr().cast(),
                 w,

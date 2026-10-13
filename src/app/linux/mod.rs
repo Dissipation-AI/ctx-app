@@ -788,14 +788,8 @@ fn scale_of(w: u64) -> f64 {
     with_app(|a| a.wins.get(&w).map(|x| backing_scale(&x.views))).flatten().unwrap_or(1.0)
 }
 
-/// Call into the app now if it's free, else as soon as it is.
 fn call(f: impl FnOnce(&mut App) + 'static) {
-    let cell = RefCell::new(Some(f));
-    if with_app(|a| (cell.borrow_mut().take().unwrap())(a)).is_none()
-        && let Some(f) = cell.borrow_mut().take()
-    {
-        later(f);
-    }
+    super::call(f);
 }
 
 #[cfg(test)]
