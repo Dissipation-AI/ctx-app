@@ -298,6 +298,8 @@ pub struct Win {
     pub find: Option<FindBar>,
     pub focus: Focus,
     pub reopen_offer: Option<Vec<u64>>,
+    /// Several lines waiting to be pasted at a prompt: the tab and the text.
+    pub paste_offer: Option<(u64, String)>,
     /// A divider being dragged: its path in the tile tree.
     pub dragging_divider: Option<Vec<bool>>,
     /// A selection being dragged: which tab.
@@ -991,6 +993,7 @@ impl App {
             find: None,
             focus: Focus::Term,
             reopen_offer: None,
+            paste_offer: None,
             dragging_divider: None,
             selecting: None,
             hover_link: None,
@@ -1267,9 +1270,20 @@ impl App {
         let (cw, ch) = plat::content_size(&win.views);
         let ids: Vec<u64> = self.window_info(w).map(|i| i.tabs.iter().map(|t| t.number).collect()).unwrap_or_default();
         let inset = plat::titlebar_inset(&win.views);
-        let bar = chrome::bar_layout(&ids, cw, inset, win.bar_scroll);
+        let mut bar = chrome::bar_layout(&ids, cw, inset, win.bar_scroll);
+        // Keep the shown tab in view (after a relaunch, a resize, a new tab).
+        if let Some(t) = win.focused.or(win.selected) {
+            let scroll = bar.scroll_to(t, win.bar_scroll);
+            if (scroll - win.bar_scroll).abs() > 0.5 {
+                bar = chrome::bar_layout(&ids, cw, inset, scroll);
+            }
+        }
+        let scroll = bar.tabs.first().map(|(_, r)| (bar.strip.x - r.x).max(0.0)).unwrap_or(0.0);
         let mut top = chrome::BAR_H;
         if win.reopen_offer.is_some() {
+            top += chrome::STRIP_H;
+        }
+        if win.paste_offer.is_some() {
             top += chrome::STRIP_H;
         }
         let bottom = if win.find.is_some() { chrome::STRIP_H } else { 0.0 };
@@ -1292,6 +1306,7 @@ impl App {
             win.chrome_dirty = true;
         }
         win.bar = bar;
+        win.bar_scroll = scroll;
         win.term_rect = area;
         win.tile_rects = rects;
         win.scale = scale;

@@ -94,6 +94,13 @@ pub enum Hit {
     FindDone,
     ReopenYes,
     ReopenNo,
+    PasteYes,
+    PasteNo,
+}
+
+/// Where a tab's activity badge is (a click there opens Activity), in points.
+pub fn badge_rect(tab: Rect) -> Rect {
+    Rect::new(tab.x + tab.w - 26.0, tab.y + 2.0, 24.0, tab.h / 2.0 + 2.0)
 }
 
 /// The bar's geometry, in points.
@@ -542,6 +549,29 @@ impl ReopenLayout {
     }
 }
 
+/// The strip asking whether to paste several lines at a prompt.
+pub fn paste_layout(w: f64, y: f64) -> ReopenLayout {
+    reopen_layout(w, y)
+}
+
+/// One line showing what would be pasted: its lines joined with ⏎.
+pub fn paste_preview(text: &str) -> String {
+    let lines: Vec<&str> = text.trim_end_matches('\n').lines().collect();
+    let n = lines.len();
+    let joined: String = lines.join("  ⏎  ").chars().take(240).collect();
+    format!("Paste {n} lines?   {joined}")
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_paste<C: Canvas>(c: &mut C, l: &ReopenLayout, text: &str, hover: Option<Hit>, fonts: &ChromeFonts, col: &Colors, s: f64) {
+    let b = px(l.bar, s);
+    c.fill(mix(col.bar, col.waiting, 0.14), 1.0, b.x, b.y, b.w, b.h);
+    c.fill(col.line, 1.0, b.x, b.y + b.h - s.max(1.0), b.w, s.max(1.0));
+    c.text(&fonts.label, &paste_preview(text), b.x + 12.0 * s, b.y + (b.h - fonts.label.height()) / 2.0, (l.yes.x - 20.0) * s, col.text, Trunc::Tail);
+    draw_button(c, l.yes, "Paste", &fonts.label, col, s, hover == Some(Hit::PasteYes), true);
+    draw_button(c, l.no, "Cancel", &fonts.label, col, s, hover == Some(Hit::PasteNo), false);
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw_reopen<C: Canvas>(c: &mut C, l: &ReopenLayout, text: &str, hover: Option<Hit>, fonts: &ChromeFonts, col: &Colors, s: f64) {
     let b = px(l.bar, s);
@@ -599,5 +629,6 @@ mod tests {
         assert_eq!(f.hit(3.0, 10.0), None);
         let r = reopen_layout(800.0, 40.0);
         assert_eq!(r.hit(r.yes.x + 1.0, r.yes.y + 1.0), Some(Hit::ReopenYes));
+        assert_eq!(paste_preview("echo a\necho b\n"), "Paste 2 lines?   echo a  ⏎  echo b");
     }
 }

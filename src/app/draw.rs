@@ -321,6 +321,7 @@ impl App {
         let find = win.find.clone();
         let find_focused = win.focus == Focus::Find && key;
         let reopen = win.reopen_offer.as_ref().map(|t| t.len());
+        let paste = win.paste_offer.as_ref().map(|(_, t)| t.clone());
         let hover_hit = win.hover;
         let drag = win.tab_press.filter(|p| p.dragging).map(|p| (p.index, p.x));
         let full = matches!(dirty, Some(Dirty::All));
@@ -334,10 +335,16 @@ impl App {
             if chrome_dirty {
                 let frame = BarFrame { layout: &win.bar, items: &items, hover: hover_hit, dragging: drag, active: key, width: cw };
                 chrome::draw_bar(c, &frame, &fonts, &col, scale);
+                let mut strip_y = chrome::BAR_H;
                 if let Some(n) = reopen {
-                    let l = chrome::reopen_layout(cw, chrome::BAR_H);
+                    let l = chrome::reopen_layout(cw, strip_y);
                     let text = format!("Reopen {n} {} from last time?", if n == 1 { "tab" } else { "tabs" });
                     chrome::draw_reopen(c, &l, &text, hover_hit, &fonts, &col, scale);
+                    strip_y += chrome::STRIP_H;
+                }
+                if let Some(t) = &paste {
+                    let l = chrome::paste_layout(cw, strip_y);
+                    chrome::draw_paste(c, &l, t, hover_hit, &fonts, &col, scale);
                 }
                 if let Some(f) = &find
                     && !has_panel
@@ -472,10 +479,21 @@ impl App {
         if y < chrome::BAR_H {
             return win.bar.hit(x, y);
         }
-        if win.reopen_offer.is_some()
-            && let Some(h) = chrome::reopen_layout(cw, chrome::BAR_H).hit(x, y)
+        let mut strip_y = chrome::BAR_H;
+        if win.reopen_offer.is_some() {
+            if let Some(h) = chrome::reopen_layout(cw, strip_y).hit(x, y) {
+                return h;
+            }
+            strip_y += chrome::STRIP_H;
+        }
+        if win.paste_offer.is_some()
+            && let Some(h) = chrome::paste_layout(cw, strip_y).hit(x, y)
         {
-            return h;
+            return match h {
+                Hit::ReopenYes => Hit::PasteYes,
+                Hit::ReopenNo => Hit::PasteNo,
+                other => other,
+            };
         }
         if win.find.is_some()
             && win.panel.is_none()

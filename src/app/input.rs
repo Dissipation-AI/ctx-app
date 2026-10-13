@@ -82,6 +82,14 @@ impl App {
             }
             Focus::Term => {}
         }
+        if win.paste_offer.is_some() {
+            match ui::field_key(p) {
+                Some(FieldKey::Enter { .. }) => self.paste_offer(w, true),
+                Some(FieldKey::Escape) => self.paste_offer(w, false),
+                _ => {}
+            }
+            return keys::Input::Handled;
+        }
         if win.panel.is_some() {
             // The terminal is covered: keys reach a panel's field, or Escape closes it.
             if ui::field_key(p) == Some(FieldKey::Escape) {
@@ -296,6 +304,13 @@ impl App {
                     self.close_tab(tab, false);
                     return;
                 }
+                // A click on the activity badge shows what touched the tab.
+                let badge = self.touched.get(&tab).is_some_and(|(at, _)| at.elapsed().as_secs() < super::BADGE_SECONDS);
+                let on_badge = self.wins.get(&w).and_then(|win| win.bar.tabs.get(index)).is_some_and(|(_, r)| chrome::badge_rect(*r).contains(x, y));
+                if badge && on_badge {
+                    self.open_panel(w, Kind::Activity);
+                    return;
+                }
                 if clicks == 2 {
                     self.rename_dialog(tab);
                     return;
@@ -360,6 +375,10 @@ impl App {
             }
             Hit::ReopenYes | Hit::ReopenNo => {
                 self.reopen_offer(w, hit == Hit::ReopenYes);
+                return;
+            }
+            Hit::PasteYes | Hit::PasteNo => {
+                self.paste_offer(w, hit == Hit::PasteYes);
                 return;
             }
             Hit::Term => {}
@@ -804,18 +823,30 @@ impl App {
         let at_prompt = v.is_some_and(|v| v.screen.at_prompt && !v.screen.full_screen);
         let lines = text.trim_end_matches('\n').lines().count();
         if self.loaded.app.confirm_multiline_paste && at_prompt && lines > 1 {
-            let first = text.lines().next().unwrap_or("").chars().take(80).collect::<String>();
-            let msg = format!("{first}\n… and {} more lines. Each line may run as a command.", lines - 1);
-            self.ask(&format!("Paste {lines} lines?"), &msg, "Paste", "Cancel", move |app, yes| {
-                if yes {
-                    app.go_live(tab);
-                    app.input(tab, AppInput::Paste(text));
-                }
-            });
+            // A one-line preview over the terminal: Return (or Paste) pastes, Escape cancels.
+            if let Some(win) = self.wins.get_mut(&w) {
+                win.paste_offer = Some((tab, text));
+                win.chrome_dirty = true;
+            }
+            self.layout(w);
+            self.dirty_win(w);
+            self.redraw_dirty();
             return;
         }
         self.go_live(tab);
         self.input(tab, AppInput::Paste(text));
+    }
+
+    /// Answer the paste preview.
+    pub fn paste_offer(&mut self, w: u64, accept: bool) {
+        let Some((tab, text)) = self.wins.get_mut(&w).and_then(|x| x.paste_offer.take()) else { return };
+        if accept {
+            self.go_live(tab);
+            self.input(tab, AppInput::Paste(text));
+        }
+        self.layout(w);
+        self.dirty_win(w);
+        self.redraw_dirty();
     }
 
     pub fn drop_paths(&mut self, w: u64, paths: Vec<String>) {
