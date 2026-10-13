@@ -1,6 +1,6 @@
 # CTX.app
 
-The native macOS window for [ctx](../ctx). It holds no shells and no scrollback of its own: it
+The native macOS window for [ctx](../ctx) (it also builds on Linux, for development and testing). It holds no shells and no scrollback of its own: it
 shows what the `ctx` server has and sends it your keys. Anything you do here, an agent can do with
 the `ctx` command, and the app shows it at once. See [SPEC.md](SPEC.md).
 
@@ -18,20 +18,36 @@ A development build finds `ctx` next to it (`../ctx/target/…`) and starts the 
 launchd the same way the command line does. The bundled app registers the server with
 `SMAppService` and offers to link `ctx` and `bro` into your PATH the first time it runs.
 
+To replace an installed copy with a fresh build, and have macOS ask its privacy questions again:
+
+```sh
+scripts/install-mac.sh          # build, quit CTX, stop the server (asks), remove the old app,
+                                # reset TCC for CTX, ctx-launch and launchers, install, launch
+scripts/install-mac.sh --help   # --debug, --keep-tcc, --keep-server, --uninstall, --dest, --yes
+```
+
 Set `CTX_HOME=/some/folder` to try it against a separate server (`ctx server` with the same
 `CTX_HOME`) without touching your tabs, launchd or PATH.
+
+### Linux
+
+Needs the X11 and fontconfig development packages, and Xvfb, xdotool and ImageMagick for the
+harness. `cargo build` makes `target/debug/CTX`; `scripts/dev-linux.sh start` runs it on a virtual
+display against a throwaway server (`shot`, `ctx …`, `stop`; drive it with `xdotool`). Shortcuts are
+Ctrl+Shift where macOS uses ⌘.
 
 ## Tests
 
 ```sh
 cargo test                     # unit tests and reference screens (needs ../ctx built)
-tests/selftest.sh              # the app drives itself with real AppKit events
+tests/selftest.sh              # the app drives itself with real events (Xvfb on Linux)
 tests/crash.sh                 # kill -9 and relaunch restores windows, tabs and scrollback
 scripts/budgets.sh             # memory: 3 windows, 15 tabs, top running
 ```
 
 `CTX_APP_DUMP=<folder>` saves every window's pixels (and tab bar) as PNGs after each draw.
-`CTX --render <tab> out.png` draws one tab without a window.
+`CTX_APP_INSPECT=<file>` writes the app's state as JSON after each draw. `CTX --render <tab> out.png`
+draws one tab without a window. All of these run on Linux too.
 
 ## Results (2026-10-11, M4 Pro, macOS 27, release build)
 
@@ -44,6 +60,22 @@ scripts/budgets.sh             # memory: 3 windows, 15 tabs, top running
 | Reference screens (colours, emoji/CJK, box drawing, Ink-style redraw, vim) | pass |
 | `kill -9` and relaunch | every window and tab back, scrollback kept |
 
+## Results on Linux (2026-10-13, Xvfb at 2× scale, release build)
+
+| Check | Result |
+|---|---|
+| 3 windows (900×600 pt), 15 tabs, `top` running | **app 48 MB PSS** (budget < 80), **server 7 MB**, app CPU ~3% (software presenting) |
+| Keystroke to pixels | median 2.0 ms |
+| Self-test (typing, arrow keys before typing, copy/paste, find, scrollback, the + / History / Activity buttons, tab clicks, tiles, rename, per-tab theme, Reopen, badges, Find All, Overview, drag out to a new window, window drag area, latency) | 30/30 pass |
+| Reference screens (`tests/reference/linux`) | pass |
+| `kill -9` and relaunch | 4/4 checks pass |
+
+Built and type-checked for macOS (`cargo clippy --target aarch64-apple-darwin`) but not yet run
+there since the drawn tab bar went in: tabs in the title bar (clicks under the transparent title
+bar, traffic-light placement), drag out to a new window, the sRGB surface tag and
+`scripts/install-mac.sh` need a pass on a Mac. If the title-bar tabs misbehave,
+`tabs_in_titlebar = false` puts them below a normal title bar.
+
 ## Not done yet
 
 - Side-by-side comparison with Ghostty, and Claude Code, htop and lazygit by eye: the screens here
@@ -54,5 +86,5 @@ scripts/budgets.sh             # memory: 3 windows, 15 tabs, top running
   tile divider dragging, real IME input (the self-test covers the text-input path, not a Japanese
   input method), dictation, the first-run install flow on a clean account.
 - Developer ID signing and notarization (the xtask does it given an identity; none was available).
-- OSC 8 hyperlinks (URLs in text are detected); VoiceOver.
+- VoiceOver.
 - A faint dot under some emoji sequences (🏳️‍🌈, 👨‍👩‍👧).
