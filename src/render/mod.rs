@@ -243,6 +243,10 @@ fn draw_row<C: Canvas>(c: &mut C, t: &TileFrame, r: usize) {
             continue;
         }
         let (mut fg, bg) = fg_of(&cell.style);
+        // Text on a find match is dark, for contrast with the highlight.
+        if t.matches.iter().any(|&(mr, a, b, _)| mr == r && cell.column >= a && cell.column < b) {
+            fg = [24, 24, 24];
+        }
         if let Some(cur) = cursor_here
             && cur.focused
             && cur.shape == CursorShape::Block

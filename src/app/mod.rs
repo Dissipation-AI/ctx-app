@@ -263,6 +263,9 @@ pub struct TabPress {
     pub x: f64,
     pub y: f64,
     pub dragging: bool,
+    /// The tab that was showing before the press selected this one (a drop on the terminal
+    /// tiles next to it).
+    pub previous: Option<u64>,
 }
 
 /// A shown `ctx` window.
@@ -1009,6 +1012,10 @@ impl App {
     }
 
     pub fn select_tab(&mut self, w: u64, tab: u64) {
+        // Choosing a tab means you want to see it: a panel over the terminal goes.
+        if self.wins.get(&w).is_some_and(|x| x.panel.is_some()) {
+            self.close_panel(w);
+        }
         let Some(win) = self.wins.get_mut(&w) else { return };
         match &mut win.tiles {
             Some(tiles) if tiles.contains(tab) => win.focused = Some(tab),

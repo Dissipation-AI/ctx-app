@@ -38,8 +38,20 @@ pub struct TabItem {
     pub selected: bool,
     pub tiled: bool,
     pub status: Status,
-    /// The tab's theme background (the selected tab is drawn in it, others tinted by it).
+    /// The tab's theme background (the selected tab is drawn in it).
     pub background: Rgb,
+    /// The tab has a theme of its own: unselected, it's tinted with it so colours mark projects.
+    pub themed: bool,
+}
+
+/// What an unselected tab is filled with (`None`: the bar shows through).
+fn unselected_fill(item: &TabItem, hover: bool, col: &Colors) -> Option<Rgb> {
+    match (item.themed, hover) {
+        (true, false) => Some(mix(col.tab, item.background, 0.6)),
+        (true, true) => Some(mix(col.tab_hover, item.background, 0.6)),
+        (false, true) => Some(col.tab_hover),
+        (false, false) => None,
+    }
 }
 
 /// What's going on in a tab, for the tab bar and the overview.
@@ -221,10 +233,16 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
             r.x = mid - r.w / 2.0;
         }
         let hover = matches!(f.hover, Some(Hit::Tab { index, .. }) if index == i);
-        draw_tab(c, item, px(r, s), hover, matches!(f.hover, Some(Hit::Tab { index, close: true, .. }) if index == i), fonts, col, s, f.active);
-        // A thin separator between unselected neighbours.
-        let next_selected = f.items.get(i + 1).is_some_and(|n| n.selected);
-        if !item.selected && !next_selected && !hover && i + 1 < f.items.len() {
+        let hovered = |j: usize| matches!(f.hover, Some(Hit::Tab { index, .. }) if index == j);
+        let beside = |j: Option<usize>| {
+            j.and_then(|j| f.items.get(j).map(|n| (j, n))).and_then(|(j, n)| unselected_fill(n, hovered(j), col)).unwrap_or(col.bar)
+        };
+        let feet = (beside(i.checked_sub(1)), beside(Some(i + 1)));
+        draw_tab(c, item, px(r, s), hover, matches!(f.hover, Some(Hit::Tab { index, close: true, .. }) if index == i), feet, fonts, col, s, f.active);
+        // A thin separator between plain unselected neighbours.
+        let next = f.items.get(i + 1);
+        let plain = |n: &TabItem, j: usize| !n.selected && unselected_fill(n, hovered(j), col).is_none();
+        if plain(item, i) && next.is_some_and(|n| plain(n, i + 1)) {
             let x = (r.x + r.w) * s;
             c.fill(col.line, 0.7, x - 0.5 * s, (TAB_TOP + 9.0) * s, s.max(1.0), (BAR_H - TAB_TOP - 18.0) * s);
         }
@@ -262,26 +280,37 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_tab<C: Canvas>(c: &mut C, item: &TabItem, r: Rect, hover: bool, close_hover: bool, fonts: &ChromeFonts, col: &Colors, s: f64, active: bool) {
+fn draw_tab<C: Canvas>(
+    c: &mut C,
+    item: &TabItem,
+    r: Rect,
+    hover: bool,
+    close_hover: bool,
+    feet: (Rgb, Rgb),
+    fonts: &ChromeFonts,
+    col: &Colors,
+    s: f64,
+    active: bool,
+) {
     let rad = 8.0 * s;
-    let (fill, x, w) = if item.selected {
-        (item.background, r.x, r.w)
-    } else {
-        // Tinted by the tab's own theme, so colours mark projects even when unselected.
-        let base = if hover { col.tab_hover } else { col.tab };
-        (mix(base, item.background, 0.45), r.x + 1.0 * s, r.w - 2.0 * s)
-    };
+    let (x, w) = if item.selected { (r.x, r.w) } else { (r.x + 1.0 * s, r.w - 2.0 * s) };
     let top = r.y + if item.selected { 0.0 } else { 2.0 * s };
     let h = r.y + r.h - top;
-    c.fill_rounded(fill, 1.0, x, top, w, h + rad, [rad, rad, 0.0, 0.0]);
+    let fill = if item.selected { Some(item.background) } else { unselected_fill(item, hover, col) };
+    if let Some(f) = fill {
+        let bottom_r = if item.selected { 0.0 } else { 0.0 };
+        c.fill_rounded(f, 1.0, x, top, w, h, [rad, rad, bottom_r, bottom_r]);
+    }
+    let under = fill.unwrap_or(col.bar);
     if item.selected {
-        // The notebook look: the tab flows into the terminal with outward curves at its feet.
+        // The notebook look: the tab flows into the terminal, with outward curves at its feet
+        // cut from whatever is beside it.
         let foot = 6.0 * s;
         let bottom = r.y + r.h;
-        c.fill(fill, 1.0, x - foot, bottom - foot, foot, foot);
-        c.fill(fill, 1.0, x + w, bottom - foot, foot, foot);
-        c.fill_rounded(col.bar, 1.0, x - 2.0 * foot, bottom - 2.0 * foot, 2.0 * foot, 2.0 * foot, [foot; 4]);
-        c.fill_rounded(col.bar, 1.0, x + w, bottom - 2.0 * foot, 2.0 * foot, 2.0 * foot, [foot; 4]);
+        c.fill(under, 1.0, x - foot, bottom - foot, foot, foot);
+        c.fill(under, 1.0, x + w, bottom - foot, foot, foot);
+        c.fill_rounded(feet.0, 1.0, x - 2.0 * foot, bottom - 2.0 * foot, 2.0 * foot, 2.0 * foot, [foot; 4]);
+        c.fill_rounded(feet.1, 1.0, x + w, bottom - 2.0 * foot, 2.0 * foot, 2.0 * foot, [foot; 4]);
     } else if item.tiled {
         // Shown side by side: a line along the bottom.
         c.fill(col.accent, 0.8, x + 10.0 * s, r.y + r.h - 3.0 * s, w - 20.0 * s, 2.0 * s);
@@ -299,55 +328,60 @@ fn draw_tab<C: Canvas>(c: &mut C, item: &TabItem, r: Rect, hover: bool, close_ho
         c.stroke(&path, 1.4 * s, col.dim, 1.0);
         left = cr.x + cr.w + 6.0 * s;
     }
-    let mid = top + h / 2.0;
-    // Activity badge: filled for "typed", a ring for "read only".
-    if let Some(typed) = item.badge {
-        let d = 8.0 * s;
-        let (bx, by) = (right - d, mid - d / 2.0);
-        if typed {
-            c.fill_rounded(col.typed, 1.0, bx, by, d, d, [d / 2.0; 4]);
-        } else {
-            c.fill_rounded(col.read, 1.0, bx, by, d, d, [d / 2.0; 4]);
-            c.fill_rounded(fill, 1.0, bx + 1.5 * s, by + 1.5 * s, d - 3.0 * s, d - 3.0 * s, [d / 2.0; 4]);
-        }
-        right -= d + 6.0 * s;
-    }
-    // Status: a dot for a running command, a pill for an agent.
-    match item.status {
-        Status::Busy => {
-            let d = 6.0 * s;
-            c.fill_rounded(col.busy, 1.0, right - d, mid - d / 2.0, d, d, [d / 2.0; 4]);
-            right -= d + 6.0 * s;
-        }
-        Status::Idle => {}
-        Status::AgentWorking | Status::AgentWaiting => {}
-    }
-    for (tag, tint, pre) in [(&item.agent, col.agent, ""), (&item.launcher, col.launcher, "⚿ ")] {
-        if let Some(name) = tag {
-            let text = match (item.status, tag == &item.agent) {
-                (Status::AgentWaiting, true) => format!("{name} · waiting"),
-                (Status::AgentWorking, true) => format!("{name} · working"),
-                _ => format!("{pre}{name}"),
-            };
-            let tw = (fonts.small.measure(&text) + 10.0 * s).min((right - left) * 0.5);
-            if right - tw > left + 30.0 * s {
-                let ph = fonts.small.height() + 2.0 * s;
-                let tint = if tag == &item.agent && item.status == Status::AgentWaiting { col.waiting } else { tint };
-                c.fill_rounded(tint, 0.22, right - tw, mid - ph / 2.0, tw, ph, [4.0 * s; 4]);
-                c.text(&fonts.small, &text, right - tw + 5.0 * s, mid - fonts.small.height() / 2.0, tw - 8.0 * s, tint, Trunc::Tail);
-                right -= tw + 5.0 * s;
-            }
-        }
-    }
-    // Two lines: the label first (what the eye reads), the folder under it, smaller and dimmer.
-    let avail = (right - left).max(10.0 * s);
-    let strong = if item.selected && active { col.text } else { mix(col.text, fill, 0.18) };
     let lf = if item.selected { &fonts.label_bold } else { &fonts.label };
     let lh = lf.height();
     let ph = fonts.small.height();
     let ty = (top + (h - lh - ph - 1.0 * s) / 2.0).round();
+    let line2 = ty + lh + 1.0 * s;
+    // Activity badge at the right of the first line: filled for "typed", a ring for "read".
+    if let Some(typed) = item.badge {
+        let d = 8.0 * s;
+        let (bx, by) = (right - d, ty + (lh - d) / 2.0);
+        if typed {
+            c.fill_rounded(col.typed, 1.0, bx, by, d, d, [d / 2.0; 4]);
+        } else {
+            c.fill_rounded(col.read, 1.0, bx, by, d, d, [d / 2.0; 4]);
+            c.fill_rounded(under, 1.0, bx + 1.5 * s, by + 1.5 * s, d - 3.0 * s, d - 3.0 * s, [d / 2.0; 4]);
+        }
+        right -= d + 6.0 * s;
+    }
+    // Status dot before the label: green while a command runs, purple while an agent works,
+    // amber while it waits for you.
+    let dot = match item.status {
+        Status::Idle => None,
+        Status::Busy => Some(col.busy),
+        Status::AgentWorking => Some(col.agent),
+        Status::AgentWaiting => Some(col.waiting),
+    };
+    if let Some(dc) = dot {
+        let d = 7.0 * s;
+        c.fill_rounded(dc, 1.0, left, ty + (lh - d) / 2.0, d, d, [d / 2.0; 4]);
+        left += d + 6.0 * s;
+    }
+    // First line: the label, what the eye reads first.
+    let avail = (right - left).max(10.0 * s);
+    let strong = if item.selected && active { col.text } else { mix(col.text, under, 0.2) };
     c.text(lf, &item.label, left, ty, avail, strong, Trunc::Tail);
-    c.text(&fonts.small, &item.path, left, ty + lh + 1.0 * s, avail, col.dim, Trunc::Head);
+    // Second line, smaller and dimmer: who opened it (an agent), a launcher, then the folder.
+    let mut x2 = left;
+    let end2 = x + w - 10.0 * s;
+    if let Some(a) = &item.agent {
+        let text = match item.status {
+            Status::AgentWaiting => format!("{a} · waiting"),
+            Status::AgentWorking => format!("{a} · working"),
+            _ => a.clone(),
+        };
+        let tint = if item.status == Status::AgentWaiting { col.waiting } else { col.agent };
+        let tw = c.text(&fonts.small, &text, x2, line2, (end2 - x2) * 0.6, tint, Trunc::Tail);
+        x2 += tw + 6.0 * s;
+    }
+    if let Some(l) = &item.launcher {
+        let tw = c.text(&fonts.small, &format!("⚿ {l}"), x2, line2, (end2 - x2) * 0.5, col.launcher, Trunc::Tail);
+        x2 += tw + 6.0 * s;
+    }
+    if end2 - x2 > 12.0 * s {
+        c.text(&fonts.small, &item.path, x2, line2, end2 - x2, col.dim, Trunc::Head);
+    }
 }
 
 /// Small line icons for the bar's buttons.

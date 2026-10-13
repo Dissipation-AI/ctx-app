@@ -88,12 +88,12 @@ pub fn ghostty() -> Theme {
 /// Ghostty's palette on other backgrounds, distinct enough to tell tabs (and projects) apart at
 /// a glance: name, background, selection.
 const TINTS: &[(&str, [u8; 3], [u8; 3])] = &[
-    ("midnight", [27, 35, 52], [52, 66, 96]),
-    ("forest", [28, 40, 33], [52, 74, 60]),
-    ("plum", [44, 31, 48], [80, 58, 88]),
-    ("ember", [48, 33, 28], [88, 62, 52]),
-    ("ocean", [20, 42, 50], [40, 76, 90]),
-    ("graphite", [30, 30, 30], [70, 70, 74]),
+    ("midnight", [22, 32, 60], [48, 66, 110]),
+    ("forest", [22, 44, 31], [48, 82, 60]),
+    ("plum", [50, 27, 57], [88, 56, 98]),
+    ("ember", [58, 32, 23], [100, 62, 48]),
+    ("ocean", [14, 46, 58], [36, 82, 100]),
+    ("graphite", [32, 32, 32], [72, 72, 76]),
 ];
 
 fn tinted(name: &str) -> Option<Theme> {

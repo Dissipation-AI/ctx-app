@@ -382,9 +382,9 @@ impl App {
         self.open_menu(w, Menu::new(x - 10.0, chrome::BAR_H - 2.0, items));
     }
 
-    /// Ask the server for starters at most once a minute (the menu shows what it has meanwhile).
+    /// Ask the server for starters (the menu shows what it has until the answer comes).
     pub fn refresh_starters(&mut self) {
-        if self.starters_at.is_some_and(|t| t.elapsed() < Duration::from_secs(60)) {
+        if self.starters_at.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
             return;
         }
         self.starters_at = Some(Instant::now());

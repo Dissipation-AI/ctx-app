@@ -98,6 +98,7 @@ impl App {
                     .and_then(|(at, typed)| (now.duration_since(*at).as_secs() < BADGE_SECONDS).then_some(*typed));
                 let (label, path) = super::tab_lines(t);
                 let background = self.tab_theme(t.number).background;
+                let themed = self.state.tab_themes.contains_key(&t.number);
                 TabItem {
                     tab: t.number,
                     label,
@@ -112,6 +113,7 @@ impl App {
                     tiled: tiled.contains(&t.number),
                     status: self.statuses.get(&t.number).copied().unwrap_or(Status::Idle),
                     background,
+                    themed,
                 }
             })
             .collect()

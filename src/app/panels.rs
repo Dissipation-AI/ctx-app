@@ -137,21 +137,25 @@ impl Panel {
                     When::Month => age < 30 * day,
                 }
             })
-            .filter(|t| {
-                let hay = format!(
-                    "{} {} {} {} {} tab {}",
-                    t.name.clone().unwrap_or_default(),
-                    t.folder,
-                    t.opened_by,
-                    t.closed_at,
-                    t.opened_at,
-                    t.number
-                )
-                .to_lowercase();
-                words.iter().all(|w| hay.contains(w))
-            })
+            .filter(|t| history_matches(t, &words))
             .collect()
     }
+}
+
+/// Whether a closed tab matches every word of History's filter. A number matches the tab's
+/// number or part of its date (`tab 6`, `2026-10`), not any digit in a timestamp.
+fn history_matches(t: &ClosedTab, words: &[String]) -> bool {
+    let text = format!("{} {} {} tab", t.name.clone().unwrap_or_default(), t.folder, t.opened_by).to_lowercase();
+    let date = t.closed_at.get(..10).unwrap_or("");
+    words.iter().all(|w| {
+        if w.chars().all(|c| c.is_ascii_digit()) {
+            w.parse::<u64>().is_ok_and(|n| n == t.number) || date.split('-').any(|p| p == w)
+        } else if w.contains('-') && w.chars().all(|c| c.is_ascii_digit() || c == '-') {
+            date.starts_with(w.as_str())
+        } else {
+            text.contains(w.as_str())
+        }
+    })
 }
 
 /// "12s ago", "3m ago", "2h ago", or a date.
@@ -343,10 +347,11 @@ fn history(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
                 Some(n) => n.clone(),
                 None => super::short_folder(&t.folder),
             };
-            text(items, Rect::new(r.x + 10.0, r.y + 4.0, r.w - 20.0, 18.0), Font::Bold, format!("{title}"), col.text);
+            text(items, Rect::new(r.x + 10.0, r.y + 4.0, r.w - 20.0, 18.0), Font::Bold, title, col.text);
             let by = if t.opened_by == "you" { String::new() } else { format!(" · {}", super::agent_name(&t.opened_by)) };
             let ended = if t.ended == "interrupted" { " · interrupted" } else { "" };
-            let detail = format!("tab {} · {} · {} commands{by}{ended} · {}", t.number, ago(&t.closed_at), t.commands, super::short_folder(&t.folder));
+            let commands = if t.commands == 1 { "1 command".to_string() } else { format!("{} commands", t.commands) };
+            let detail = format!("tab {} · {} · {commands}{by}{ended} · {}", t.number, ago(&t.closed_at), super::short_folder(&t.folder));
             text(items, Rect::new(r.x + 10.0, r.y + 22.0, r.w - 20.0, 16.0), Font::Small, detail, col.dim);
             hit(items, r, PanelHit::Closed(t.number));
         }
@@ -706,5 +711,8 @@ mod tests {
         p.when = When::Any;
         p.field.set("site dep");
         assert_eq!(p.visible_closed().iter().map(|t| t.number).collect::<Vec<_>>(), vec![1]);
+        // A number is a tab number, not any digit in a date.
+        p.field.set("tab 2");
+        assert_eq!(p.visible_closed().iter().map(|t| t.number).collect::<Vec<_>>(), vec![2]);
     }
 }

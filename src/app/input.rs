@@ -300,8 +300,9 @@ impl App {
                     self.rename_dialog(tab);
                     return;
                 }
+                let previous = self.focused_tab(w).filter(|t| *t != tab);
                 if let Some(win) = self.wins.get_mut(&w) {
-                    win.tab_press = Some(TabPress { tab, index, x, y, dragging: false });
+                    win.tab_press = Some(TabPress { tab, index, x, y, dragging: false, previous });
                 }
                 if self.focused_tab(w) != Some(tab) {
                     self.select_tab(w, tab);
@@ -438,7 +439,8 @@ impl App {
                 plat::set_cursor(Cursor::Grab);
             }
             if press.dragging {
-                press.x = x;
+                // Along the bar the tab follows the pointer; away from it, it stays put.
+                press.x = if y < chrome::BAR_H + 20.0 { x } else { win.bar.tabs.get(press.index).map(|(_, r)| r.x + r.w / 2.0).unwrap_or(x) };
                 win.tab_press = Some(press);
                 win.chrome_dirty = true;
                 let (sx, sy) = plat::to_screen(&win.views, x, y);
@@ -524,7 +526,7 @@ impl App {
             if press.dragging {
                 plat::set_cursor(Cursor::Arrow);
                 let (sx, sy) = plat::to_screen(&win.views, x, y);
-                self.drop_tab(press.tab, w, press.index, sx, sy);
+                self.drop_tab(press.tab, w, press.index, press.previous, sx, sy);
             }
             self.redraw_dirty();
             return;
@@ -1024,7 +1026,7 @@ impl App {
     // -----------------------------------------------------------------------------------------
 
     /// A tab dragged from window `from`'s bar and released at a screen point.
-    pub fn drop_tab(&mut self, tab: u64, from: u64, index: usize, sx: f64, sy: f64) {
+    pub fn drop_tab(&mut self, tab: u64, from: u64, index: usize, previous: Option<u64>, sx: f64, sy: f64) {
         for win in self.wins.values_mut() {
             if win.drop_hint.take().is_some() {
                 win.dirty = Some(Dirty::All);
@@ -1050,11 +1052,19 @@ impl App {
             }
             // On the terminal: side by side with the tab under it (moving it there first).
             let target_tile = self.wins.get(&w).and_then(|win| win.tile_rects.iter().find(|(_, r)| r.contains(lx, ly)).copied());
-            if let Some((target_tab, r)) = target_tile
+            if let Some((mut target_tab, r)) = target_tile
                 && let Some(edge) = layout::drop_edge(r, lx, ly)
             {
                 if target_tab == tab {
-                    return;
+                    // The press selected the dragged tab: tile it next to what showed before.
+                    let Some(prev) = previous.filter(|_| w == from) else { return };
+                    if let Some(win) = self.wins.get_mut(&w)
+                        && win.tiles.is_none()
+                    {
+                        win.selected = Some(prev);
+                        win.focused = Some(prev);
+                    }
+                    target_tab = prev;
                 }
                 if w != from {
                     self.move_tab(tab, WindowRef::Number(w), None);
