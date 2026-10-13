@@ -200,7 +200,6 @@ impl Fonts {
         // Shape it: Core Text picks fonts and ligatures for the whole cluster.
         Plan::Line(shaped_line(g, base))
     }
-
 }
 
 fn shaped_line(g: &str, font: &CTFont) -> CFRetained<CTLine> {
@@ -252,8 +251,11 @@ pub struct UiFont {
 
 impl UiFont {
     fn new(px: f64, bold: bool) -> UiFont {
-        let weight =
-            if bold { unsafe { objc2_app_kit::NSFontWeightSemibold } } else { unsafe { objc2_app_kit::NSFontWeightRegular } };
+        let weight = if bold {
+            unsafe { objc2_app_kit::NSFontWeightSemibold }
+        } else {
+            unsafe { objc2_app_kit::NSFontWeightRegular }
+        };
         let ns = objc2_app_kit::NSFont::systemFontOfSize_weight(px, weight);
         // NSFont and CTFont are toll-free bridged.
         let ptr = Retained::into_raw(ns) as *mut CTFont;
@@ -321,7 +323,8 @@ impl Surface {
         // Tell the compositor the pixels are sRGB (what we draw in), so colours aren't
         // stretched to the display's wider gamut.
         unsafe {
-            let srgb: &NSString = &*(objc2_core_graphics::kCGColorSpaceSRGB as *const objc2_core_foundation::CFString).cast::<NSString>();
+            let srgb: &NSString =
+                &*(objc2_core_graphics::kCGColorSpaceSRGB as *const objc2_core_foundation::CFString).cast::<NSString>();
             io.setAttachment_forKey(srgb, &NSString::from_str("IOSurfaceColorSpace"));
         }
         Some(Surface { backing: Backing::Io(io), width: w, height: h })
@@ -524,7 +527,6 @@ pub fn png_difference(a: &std::path::Path, b: &std::path::Path, threshold: u8) -
     Ok(differing as f64 / (aw * ah).max(1) as f64)
 }
 
-
 // ---------------------------------------------------------------------------------------------
 // The painter
 // ---------------------------------------------------------------------------------------------
@@ -648,7 +650,8 @@ impl Canvas for Painter<'_> {
         match fonts.plan(text, variant) {
             Plan::Blank => {}
             Plan::Glyph { font, glyph } => {
-                let same = self.batch.as_ref().is_some_and(|(f, fi, col)| Rc::ptr_eq(f, fonts) && *fi == font && *col == c);
+                let same =
+                    self.batch.as_ref().is_some_and(|(f, fi, col)| Rc::ptr_eq(f, fonts) && *fi == font && *col == c);
                 if !same {
                     self.flush();
                     self.batch = Some((fonts.clone(), font, c));
@@ -669,7 +672,8 @@ impl Canvas for Painter<'_> {
             return 0.0;
         }
         let mut line = font.line(s);
-        let mut w = unsafe { line.typographic_bounds(std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        let mut w =
+            unsafe { line.typographic_bounds(std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
         if w > max_w {
             let token = font.line("…");
             let kind = match trunc {

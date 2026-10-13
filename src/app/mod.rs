@@ -577,8 +577,20 @@ pub fn program_of(command: &str) -> &str {
 }
 
 /// Programs that are AI agents, whose tabs get "working" / "waiting for you" status.
-pub const AGENTS: &[&str] =
-    &["claude", "codex", "gemini", "aider", "goose", "amp", "opencode", "cursor-agent", "copilot", "qwen", "crush", "bro"];
+pub const AGENTS: &[&str] = &[
+    "claude",
+    "codex",
+    "gemini",
+    "aider",
+    "goose",
+    "amp",
+    "opencode",
+    "cursor-agent",
+    "copilot",
+    "qwen",
+    "crush",
+    "bro",
+];
 
 /// What a tab is doing: idle, running a command, or an agent working or waiting for you.
 /// An agent counts as working while its title shows a spinner or it printed in the last few
@@ -591,9 +603,11 @@ pub fn status_of(t: &TabInfo, last_output: Option<Instant>) -> Status {
     if !AGENTS.contains(&prog) {
         return Status::Busy;
     }
-    let spinner = t.title.as_deref().and_then(|s| s.trim_start().chars().next()).is_some_and(|c| {
-        ('\u{2800}'..='\u{28ff}').contains(&c) || "◐◓◑◒⣾⣽⣻⢿⡿⣟⣯⣷✢✳✶✻✽·".contains(c) && c != '✳'
-    });
+    let spinner = t
+        .title
+        .as_deref()
+        .and_then(|s| s.trim_start().chars().next())
+        .is_some_and(|c| ('\u{2800}'..='\u{28ff}').contains(&c) || "◐◓◑◒⣾⣽⣻⢿⡿⣟⣯⣷✢✳✶✻✽·".contains(c) && c != '✳');
     let recent = last_output.is_some_and(|at| at.elapsed() < Duration::from_millis(2500));
     if spinner || recent { Status::AgentWorking } else { Status::AgentWaiting }
 }
@@ -798,7 +812,11 @@ impl App {
     }
 
     pub fn agent_window(&self) -> Option<u64> {
-        self.list.windows.iter().find(|w| w.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(&self.loaded.agent_window_name))).map(|w| w.number)
+        self.list
+            .windows
+            .iter()
+            .find(|w| w.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(&self.loaded.agent_window_name)))
+            .map(|w| w.number)
     }
 
     fn on_tabs(&mut self, list: TabList) {
@@ -967,8 +985,7 @@ impl App {
         let selected = saved.selected.filter(|t| info_tabs.contains(t)).or(info_tabs.first().copied());
         let fonts = self.fonts.get(&self.loaded.app.font, self.loaded.app.font_size, 2.0);
         let (cw, chh) = (fonts.cell_w / 2.0, fonts.cell_h / 2.0);
-        let default_size =
-            (80.0 * cw + 2.0 * render::PAD_X, 24.0 * chh + 2.0 * render::PAD_Y + chrome::BAR_H);
+        let default_size = (80.0 * cw + 2.0 * render::PAD_X, 24.0 * chh + 2.0 * render::PAD_Y + chrome::BAR_H);
         let views = plat::make_window(n, saved.frame, default_size, self.wins.len(), self.loaded.app.tabs_in_titlebar);
         let scale = plat::backing_scale(&views);
         let win = Win {
@@ -1435,11 +1452,23 @@ impl App {
     }
 
     /// Ask for a line of text.
-    pub fn prompt(&mut self, title: &str, info: &str, default: &str, then: impl FnOnce(&mut App, Option<String>) + 'static) {
-        self.ask_with(title, info, vec!["OK".into(), "Cancel".into()], Some(default.to_string()), move |app, b, text| {
-            let t = text.trim().to_string();
-            then(app, (b == Some(0) && !t.is_empty()).then_some(t));
-        });
+    pub fn prompt(
+        &mut self,
+        title: &str,
+        info: &str,
+        default: &str,
+        then: impl FnOnce(&mut App, Option<String>) + 'static,
+    ) {
+        self.ask_with(
+            title,
+            info,
+            vec!["OK".into(), "Cancel".into()],
+            Some(default.to_string()),
+            move |app, b, text| {
+                let t = text.trim().to_string();
+                then(app, (b == Some(0) && !t.is_empty()).then_some(t));
+            },
+        );
     }
 
     fn ask_with(

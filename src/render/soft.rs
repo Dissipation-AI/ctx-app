@@ -8,11 +8,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use swash::FontRef;
 use swash::scale::image::{Content, Image};
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::shape::ShapeContext;
 use swash::zeno::{Format, Vector};
-use swash::FontRef;
 
 // ---------------------------------------------------------------------------------------------
 // Font files
@@ -105,15 +105,20 @@ impl Library {
         let preferred: &[&str] = if emoji {
             &["Noto Color Emoji", "Apple Color Emoji", "Twemoji", "Noto Emoji"]
         } else {
-            &["DejaVu Sans Mono", "DejaVu Sans", "Noto Sans Symbols", "Noto Sans Symbols 2", "Noto Sans CJK SC", "Noto Sans Mono CJK SC", "Symbola", "Noto Color Emoji"]
+            &[
+                "DejaVu Sans Mono",
+                "DejaVu Sans",
+                "Noto Sans Symbols",
+                "Noto Sans Symbols 2",
+                "Noto Sans CJK SC",
+                "Noto Sans Mono CJK SC",
+                "Symbola",
+                "Noto Color Emoji",
+            ]
         };
         for name in preferred {
-            let ids: Vec<fontdb::ID> = self
-                .db
-                .faces()
-                .filter(|f| f.families.iter().any(|(n, _)| n == name))
-                .map(|f| f.id)
-                .collect();
+            let ids: Vec<fontdb::ID> =
+                self.db.faces().filter(|f| f.families.iter().any(|(n, _)| n == name)).map(|f| f.id).collect();
             for id in ids {
                 if let Some(face) = self.load(id)
                     && face.has(c)
@@ -185,14 +190,11 @@ fn rasterise(face: &Face, gid: u16, px: f64, fit: Option<(f64, f64)>) -> Option<
         }
         let font = face.font()?;
         let mut scaler = r.scale.builder(font).size(px as f32).hint(true).build();
-        let img: Option<Image> = Render::new(&[
-            Source::ColorOutline(0),
-            Source::ColorBitmap(StrikeWith::BestFit),
-            Source::Outline,
-        ])
-        .format(Format::Alpha)
-        .offset(Vector::new(0.0, 0.0))
-        .render(&mut scaler, gid);
+        let img: Option<Image> =
+            Render::new(&[Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline])
+                .format(Format::Alpha)
+                .offset(Vector::new(0.0, 0.0))
+                .render(&mut scaler, gid);
         let g = img.map(|img| {
             let color = img.content == Content::Color;
             let mut g = Glyph {
@@ -257,7 +259,10 @@ fn shrink(g: &Glyph, k: f64, fit_h: f64) -> Glyph {
 
 #[derive(Clone)]
 enum Plan {
-    Glyph { face: usize, gid: u16 },
+    Glyph {
+        face: usize,
+        gid: u16,
+    },
     /// A cluster shaped as several glyphs: (face, glyph, x offset in pixels).
     Shaped(Rc<Vec<(usize, u16, f64)>>),
     Blank,
@@ -640,8 +645,14 @@ impl Painter<'_> {
             return None;
         }
         let mut m = tiny_skia::Mask::new(self.w as u32, self.h as u32)?;
-        let r = tiny_skia::Rect::from_ltrb(self.clip.0 as f32, self.clip.1 as f32, self.clip.2 as f32, self.clip.3 as f32)?;
-        m.fill_path(&tiny_skia::PathBuilder::from_rect(r), tiny_skia::FillRule::Winding, false, tiny_skia::Transform::identity());
+        let r =
+            tiny_skia::Rect::from_ltrb(self.clip.0 as f32, self.clip.1 as f32, self.clip.2 as f32, self.clip.3 as f32)?;
+        m.fill_path(
+            &tiny_skia::PathBuilder::from_rect(r),
+            tiny_skia::FillRule::Winding,
+            false,
+            tiny_skia::Transform::identity(),
+        );
         Some(m)
     }
 }
@@ -686,7 +697,9 @@ impl Canvas for Painter<'_> {
         let Some(path) = pb.finish() else { return };
         let paint = self.paint_of(c, alpha);
         let mask = self.clip_mask();
-        self.skia(|pm| pm.fill_path(&path, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), mask.as_ref()));
+        self.skia(|pm| {
+            pm.fill_path(&path, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), mask.as_ref())
+        });
     }
 
     fn stroke(&mut self, path: &[PathOp], width: f64, c: Rgb, alpha: f64) {

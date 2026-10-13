@@ -90,7 +90,8 @@ fn enter(app: &mut App, w: u64) {
 
 /// Where a cell of a tile is, in points within the window.
 fn cell_point(app: &mut App, w: u64, tab: u64, col: usize, row: usize) -> Option<(f64, f64)> {
-    let (r, scale) = app.wins.get(&w).and_then(|win| win.tile_rects.iter().find(|(t, _)| *t == tab).map(|x| (x.1, win.scale)))?;
+    let (r, scale) =
+        app.wins.get(&w).and_then(|win| win.tile_rects.iter().find(|(t, _)| *t == tab).map(|x| (x.1, win.scale)))?;
     let fonts = app.tab_fonts(tab, scale);
     Some((
         r.x + crate::render::PAD_X + (col as f64 + 0.5) * fonts.cell_w / scale,
@@ -164,7 +165,10 @@ pub fn start() {
     }));
     steps.push_back(Box::new(|app, r| {
         app.copy(r.window);
-        r.check(plat::get_clipboard().as_deref() == Some("ctx-selftest-ok"), "double-click selects a word; Copy copies it");
+        r.check(
+            plat::get_clipboard().as_deref() == Some("ctx-selftest-ok"),
+            "double-click selects a word; Copy copies it",
+        );
     }));
     steps.push_back(Box::new(|app, r| {
         app.open_find(r.window);
@@ -193,7 +197,10 @@ pub fn start() {
         let shows_history = v.is_some_and(|v| v.drawn.iter().any(|p| matches!(p, Place::History { .. })));
         r.check(scrolled && shows_history, "scrolling back fetches scrollback lines from the server");
         app.scroll_rows(r.tab, 10_000, false, cols);
-        r.check(app.views.get(&r.tab).is_some_and(|v| v.pos == ViewPos::Live), "scrolling down returns to the live screen");
+        r.check(
+            app.views.get(&r.tab).is_some_and(|v| v.pos == ViewPos::Live),
+            "scrolling down returns to the live screen",
+        );
         r.count = tab_count(app, r.window);
         // The + menu, and New Tab from it.
         let plus = app.wins.get(&r.window).map(|w| w.bar.plus);
@@ -246,9 +253,15 @@ pub fn start() {
         // Its own theme: the server gets that tab's colours.
         app.set_tab_theme(r.tab, Some("forest".into()));
         let bg = app.views.get(&r.tab).and_then(|v| v.look.as_ref().map(|l| l.background));
-        r.check(bg == Some(crate::theme::load("forest", std::path::Path::new("/"), true).unwrap().background), "a tab's own theme is sent to the server");
+        r.check(
+            bg == Some(crate::theme::load("forest", std::path::Path::new("/"), true).unwrap().background),
+            "a tab's own theme is sent to the server",
+        );
         // The History button opens History over the terminal.
-        let b = app.wins.get(&r.window).and_then(|w| w.bar.buttons.iter().find(|(b, _)| *b == chrome::Button::History).map(|x| x.1));
+        let b = app
+            .wins
+            .get(&r.window)
+            .and_then(|w| w.bar.buttons.iter().find(|(b, _)| *b == chrome::Button::History).map(|x| x.1));
         if let Some(b) = b {
             click_at(app, r.window, b.x + b.w / 2.0, b.y + b.h / 2.0, 1, 1);
         }
@@ -269,7 +282,9 @@ pub fn start() {
         app.close_panel(r.window);
         // Another client reads the tab: a badge.
         if let Some(ctx) = plat::install::ctx_program() {
-            let _ = std::process::Command::new(&ctx).args(["read", "last", "2", "lines", "in", "tab", &r.tab.to_string()]).output();
+            let _ = std::process::Command::new(&ctx)
+                .args(["read", "last", "2", "lines", "in", "tab", &r.tab.to_string()])
+                .output();
         }
     }));
     steps.push_back(Box::new(|app, r| {
@@ -294,10 +309,19 @@ pub fn start() {
         enter(app, r.window);
     }));
     steps.push_back(Box::new(|app, r| {
-        let found = app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).and_then(|p| p.found.as_ref()).map(|f| f.hits.len()).unwrap_or(0);
+        let found = app
+            .wins
+            .get(&r.window)
+            .and_then(|w| w.panel.as_ref())
+            .and_then(|p| p.found.as_ref())
+            .map(|f| f.hits.len())
+            .unwrap_or(0);
         r.check(found >= 1, "Find in All Tabs finds text in open and saved tabs");
         app.toggle_panel(r.window, Kind::Overview);
-        r.check(app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).is_some_and(|p| p.kind == Kind::Overview), "the Overview opens");
+        r.check(
+            app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).is_some_and(|p| p.kind == Kind::Overview),
+            "the Overview opens",
+        );
         app.close_panel(r.window);
         // Drag a tab out of the window: it gets a window of its own.
         r.count = app.list.windows.len();

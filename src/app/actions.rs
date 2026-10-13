@@ -363,7 +363,10 @@ impl App {
     /// The + button: a new tab, or one of the things you usually start tabs with.
     pub fn plus_menu(&mut self, w: u64, x: f64, y: f64) {
         self.refresh_starters();
-        let mut items = vec![MenuItem { shortcut: self.shortcut_of(Action::NewTab), ..MenuItem::new("New Tab", MenuAction::NewTabIn(w)) }];
+        let mut items = vec![MenuItem {
+            shortcut: self.shortcut_of(Action::NewTab),
+            ..MenuItem::new("New Tab", MenuAction::NewTabIn(w))
+        }];
         if !self.starters.is_empty() {
             items.push(MenuItem::separator());
             items.push(MenuItem::heading("Start a tab with…"));
@@ -371,13 +374,22 @@ impl App {
                 let label = shorten(&s.command, 48);
                 items.push(MenuItem {
                     detail: Some(format!("in {}", super::short_folder(&s.folder))),
-                    ..MenuItem::new(&format!("+ {label}"), MenuAction::Launch { window: w, folder: s.folder.clone(), command: s.command.clone() })
+                    ..MenuItem::new(
+                        &format!("+ {label}"),
+                        MenuAction::Launch { window: w, folder: s.folder.clone(), command: s.command.clone() },
+                    )
                 });
             }
         }
         items.push(MenuItem::separator());
-        items.push(MenuItem { shortcut: self.shortcut_of(Action::NewWindow), ..MenuItem::new("New Window", MenuAction::Perform(Action::NewWindow)) });
-        items.push(MenuItem { shortcut: self.shortcut_of(Action::ReopenTab), ..MenuItem::new("Reopen Closed Tab", MenuAction::Perform(Action::ReopenTab)) });
+        items.push(MenuItem {
+            shortcut: self.shortcut_of(Action::NewWindow),
+            ..MenuItem::new("New Window", MenuAction::Perform(Action::NewWindow))
+        });
+        items.push(MenuItem {
+            shortcut: self.shortcut_of(Action::ReopenTab),
+            ..MenuItem::new("Reopen Closed Tab", MenuAction::Perform(Action::ReopenTab))
+        });
         let _ = y;
         self.open_menu(w, Menu::new(x - 10.0, chrome::BAR_H - 2.0, items));
     }
@@ -396,7 +408,14 @@ impl App {
                     .map(|s| Starter { folder: s.folder, command: s.command, count: s.count as usize })
                     .collect();
                 // Refresh an open + menu.
-                let ws: Vec<u64> = app.wins.iter().filter(|(_, w)| w.menu.as_ref().is_some_and(|m| m.items.first().is_some_and(|i| i.label == "New Tab"))).map(|(n, _)| *n).collect();
+                let ws: Vec<u64> = app
+                    .wins
+                    .iter()
+                    .filter(|(_, w)| {
+                        w.menu.as_ref().is_some_and(|m| m.items.first().is_some_and(|i| i.label == "New Tab"))
+                    })
+                    .map(|(n, _)| *n)
+                    .collect();
                 for w in ws {
                     let x = app.wins[&w].menu.as_ref().map(|m| m.x + 10.0).unwrap_or(0.0);
                     app.starters_at = Some(Instant::now());
@@ -430,19 +449,37 @@ impl App {
             });
         }
         items.push(MenuItem::separator());
-        items.push(MenuItem { shortcut: self.shortcut_of(Action::CloseTab), ..MenuItem::new("Close Tab", MenuAction::Close(tab)) });
+        items.push(MenuItem {
+            shortcut: self.shortcut_of(Action::CloseTab),
+            ..MenuItem::new("Close Tab", MenuAction::Close(tab))
+        });
         self.open_menu(w, Menu::new(x, y, items));
     }
 
     /// Right-click in the terminal.
     pub fn term_menu(&mut self, w: u64, x: f64, y: f64) {
         let items = vec![
-            MenuItem { shortcut: self.shortcut_of(Action::Copy), ..MenuItem::new("Copy", MenuAction::Perform(Action::Copy)) },
-            MenuItem { shortcut: self.shortcut_of(Action::Paste), ..MenuItem::new("Paste", MenuAction::Perform(Action::Paste)) },
-            MenuItem { shortcut: self.shortcut_of(Action::SelectAll), ..MenuItem::new("Select All", MenuAction::Perform(Action::SelectAll)) },
+            MenuItem {
+                shortcut: self.shortcut_of(Action::Copy),
+                ..MenuItem::new("Copy", MenuAction::Perform(Action::Copy))
+            },
+            MenuItem {
+                shortcut: self.shortcut_of(Action::Paste),
+                ..MenuItem::new("Paste", MenuAction::Perform(Action::Paste))
+            },
+            MenuItem {
+                shortcut: self.shortcut_of(Action::SelectAll),
+                ..MenuItem::new("Select All", MenuAction::Perform(Action::SelectAll))
+            },
             MenuItem::separator(),
-            MenuItem { shortcut: self.shortcut_of(Action::Find), ..MenuItem::new("Find…", MenuAction::Perform(Action::Find)) },
-            MenuItem { shortcut: self.shortcut_of(Action::ClearScrollback), ..MenuItem::new("Clear Scrollback", MenuAction::Perform(Action::ClearScrollback)) },
+            MenuItem {
+                shortcut: self.shortcut_of(Action::Find),
+                ..MenuItem::new("Find…", MenuAction::Perform(Action::Find))
+            },
+            MenuItem {
+                shortcut: self.shortcut_of(Action::ClearScrollback),
+                ..MenuItem::new("Clear Scrollback", MenuAction::Perform(Action::ClearScrollback))
+            },
         ];
         self.open_menu(w, Menu::new(x, y, items));
     }
@@ -483,7 +520,10 @@ impl App {
                 });
             }
             Kind::Activity => {
-                let r = Request::ListActivity { filter: Filter { tab: None, folder: None, by: None, since: None }, limit: 200 };
+                let r = Request::ListActivity {
+                    filter: Filter { tab: None, folder: None, by: None, since: None },
+                    limit: 200,
+                };
                 self.request("ctx list activity", r, move |a, r| {
                     if let Response::Ok(Output::Activity(list)) = r {
                         let mut seen: Vec<ActivityEntry> = list.entries;
@@ -581,7 +621,11 @@ impl App {
                 }
                 p.searching = true;
                 p.found = None;
-                let r = Request::Find { text: text.clone(), filter: Filter { tab: None, folder: None, by: None, since: None }, limit: 100 };
+                let r = Request::Find {
+                    text: text.clone(),
+                    filter: Filter { tab: None, folder: None, by: None, since: None },
+                    limit: 100,
+                };
                 self.request(&format!("ctx find \"{text}\""), r, move |a, r| {
                     if let Some(p) = a.wins.get_mut(&w).and_then(|x| x.panel.as_mut()) {
                         p.searching = false;
@@ -771,7 +815,8 @@ impl App {
             self.touched.retain(|_, (at, _)| at.elapsed().as_secs() <= super::BADGE_SECONDS + 1);
         }
         // The Overview keeps what runs in each tab current.
-        let overview = self.wins.values().any(|w| w.visible && w.panel.as_ref().is_some_and(|p| p.kind == Kind::Overview));
+        let overview =
+            self.wins.values().any(|w| w.visible && w.panel.as_ref().is_some_and(|p| p.kind == Kind::Overview));
         if overview && self.processes_at.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) {
             self.refresh_processes();
         }
@@ -838,7 +883,9 @@ impl App {
             let tabs: Vec<u64> = c
                 .tabs
                 .iter()
-                .filter(|t| t.ended == "interrupted" && !open.contains(&t.number) && !app.state.offered.contains(&t.number))
+                .filter(|t| {
+                    t.ended == "interrupted" && !open.contains(&t.number) && !app.state.offered.contains(&t.number)
+                })
                 .map(|t| t.number)
                 .collect();
             if tabs.is_empty() {

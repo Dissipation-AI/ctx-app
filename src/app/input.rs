@@ -300,13 +300,22 @@ impl App {
                     self.close_tab(tab, false);
                     return;
                 }
-                if close && self.wins.get(&w).is_some_and(|win| matches!(win.hover, Some(Hit::Tab { index: i, .. }) if i == index)) {
+                if close
+                    && self
+                        .wins
+                        .get(&w)
+                        .is_some_and(|win| matches!(win.hover, Some(Hit::Tab { index: i, .. }) if i == index))
+                {
                     self.close_tab(tab, false);
                     return;
                 }
                 // A click on the activity badge shows what touched the tab.
                 let badge = self.touched.get(&tab).is_some_and(|(at, _)| at.elapsed().as_secs() < super::BADGE_SECONDS);
-                let on_badge = self.wins.get(&w).and_then(|win| win.bar.tabs.get(index)).is_some_and(|(_, r)| chrome::badge_rect(*r).contains(x, y));
+                let on_badge = self
+                    .wins
+                    .get(&w)
+                    .and_then(|win| win.bar.tabs.get(index))
+                    .is_some_and(|(_, r)| chrome::badge_rect(*r).contains(x, y));
                 if badge && on_badge {
                     self.open_panel(w, Kind::Activity);
                     return;
@@ -459,7 +468,11 @@ impl App {
             }
             if press.dragging {
                 // Along the bar the tab follows the pointer; away from it, it stays put.
-                press.x = if y < chrome::BAR_H + 20.0 { x } else { win.bar.tabs.get(press.index).map(|(_, r)| r.x + r.w / 2.0).unwrap_or(x) };
+                press.x = if y < chrome::BAR_H + 20.0 {
+                    x
+                } else {
+                    win.bar.tabs.get(press.index).map(|(_, r)| r.x + r.w / 2.0).unwrap_or(x)
+                };
                 win.tab_press = Some(press);
                 win.chrome_dirty = true;
                 let (sx, sy) = plat::to_screen(&win.views, x, y);
@@ -1008,7 +1021,12 @@ impl App {
     fn update_find_status(&mut self, w: u64, tab: u64) {
         let s = match self.views.get(&tab).and_then(|v| v.find.as_ref()) {
             Some(f) if f.matches.is_empty() => "Not found".to_string(),
-            Some(f) => format!("{} of {}{}", f.current.map(|c| c + 1).unwrap_or(0), f.matches.len(), if f.more { "+" } else { "" }),
+            Some(f) => format!(
+                "{} of {}{}",
+                f.current.map(|c| c + 1).unwrap_or(0),
+                f.matches.len(),
+                if f.more { "+" } else { "" }
+            ),
             None => String::new(),
         };
         self.set_find_status(w, &s);
@@ -1083,7 +1101,8 @@ impl App {
                 return;
             }
             // On the terminal: side by side with the tab under it (moving it there first).
-            let target_tile = self.wins.get(&w).and_then(|win| win.tile_rects.iter().find(|(_, r)| r.contains(lx, ly)).copied());
+            let target_tile =
+                self.wins.get(&w).and_then(|win| win.tile_rects.iter().find(|(_, r)| r.contains(lx, ly)).copied());
             if let Some((mut target_tab, r)) = target_tile
                 && let Some(edge) = layout::drop_edge(r, lx, ly)
             {
@@ -1205,7 +1224,10 @@ impl App {
                 let font = super::draw::label_font(&mut self.fonts, scale);
                 let area = self.panel_area(w);
                 let fx = self.with_panel_ctx(w, |p, ctx| {
-                    panels::layout(p, area.unwrap(), ctx).iter().find(|i| i.hit == Some(PanelHit::Field)).map(|i| i.rect.x)
+                    panels::layout(p, area.unwrap(), ctx)
+                        .iter()
+                        .find(|i| i.hit == Some(PanelHit::Field))
+                        .map(|i| i.rect.x)
                 });
                 if let Some(Some(fx)) = fx
                     && let Some(win) = self.wins.get_mut(&w)

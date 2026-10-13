@@ -36,7 +36,13 @@ pub enum PathOp {
     Line(f64, f64),
     /// A circular arc of radius `r` tangent to the line to `(x1, y1)` and the line from there to
     /// `(x2, y2)` (Core Graphics' `addArcToPoint`).
-    ArcTo { x1: f64, y1: f64, x2: f64, y2: f64, r: f64 },
+    ArcTo {
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        r: f64,
+    },
 }
 
 /// How text that doesn't fit is shortened.
@@ -277,7 +283,14 @@ fn draw_row<C: Canvas>(c: &mut C, t: &TileFrame, r: usize) {
     if let Some((lr, a, b)) = t.link
         && lr == r
     {
-        c.fill(t.foreground, 1.0, left + a as f64 * cw, top + ch - s.round().max(1.0) * 2.0, (b - a) as f64 * cw, s.max(1.0));
+        c.fill(
+            t.foreground,
+            1.0,
+            left + a as f64 * cw,
+            top + ch - s.round().max(1.0) * 2.0,
+            (b - a) as f64 * cw,
+            s.max(1.0),
+        );
     }
     // Other cursor shapes, over the text.
     if let Some(cur) = cursor_here
@@ -355,7 +368,8 @@ fn draw_shape<C: Canvas>(c: &mut C, ch: char, x: f64, top: f64, w: f64, h: f64, 
         let hx = if l > 0 { x } else { x + w };
         let vy = if u > 0 { top } else { top + h };
         let radius = (w.min(h) / 2.0).floor();
-        let path = [PathOp::Move(hx, my), PathOp::ArcTo { x1: mx, y1: my, x2: mx, y2: vy, r: radius }, PathOp::Line(mx, vy)];
+        let path =
+            [PathOp::Move(hx, my), PathOp::ArcTo { x1: mx, y1: my, x2: mx, y2: vy, r: radius }, PathOp::Line(mx, vy)];
         c.stroke(&path, light, color, 1.0);
         return;
     }

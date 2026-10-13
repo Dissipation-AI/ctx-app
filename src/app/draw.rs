@@ -105,7 +105,11 @@ impl App {
                     path,
                     title: t.title.clone(),
                     agent: (t.opened_by != "you").then(|| super::agent_name(&t.opened_by)).or_else(|| {
-                        t.running.as_deref().map(super::program_of).filter(|p| super::AGENTS.contains(p)).map(str::to_string)
+                        t.running
+                            .as_deref()
+                            .map(super::program_of)
+                            .filter(|p| super::AGENTS.contains(p))
+                            .map(str::to_string)
                     }),
                     launcher: t.permissions_of.clone(),
                     badge,
@@ -213,7 +217,9 @@ impl App {
                 let mut wrapped: HashMap<u64, Vec<Row>> = HashMap::new();
                 for p in &places {
                     match p {
-                        Place::Screen(y) => rows.push((v.screen.lines.get(*y as usize).cloned().unwrap_or_default(), false)),
+                        Place::Screen(y) => {
+                            rows.push((v.screen.lines.get(*y as usize).cloned().unwrap_or_default(), false))
+                        }
                         Place::History { line, sub } => {
                             let rs = wrapped
                                 .entry(*line)
@@ -314,8 +320,14 @@ impl App {
         let activity = self.activity.clone();
         let agent_window = self.agent_window();
         let processes = self.processes.clone();
-        let bgs: HashMap<u64, render::Rgb> =
-            list.windows.iter().flat_map(|x| x.tabs.iter().map(|t| t.number)).collect::<Vec<_>>().into_iter().map(|t| (t, self.tab_theme(t).background)).collect();
+        let bgs: HashMap<u64, render::Rgb> = list
+            .windows
+            .iter()
+            .flat_map(|x| x.tabs.iter().map(|t| t.number))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|t| (t, self.tab_theme(t).background))
+            .collect();
         let default_bg = self.theme(None).background;
         let win = self.wins.get_mut(&w).unwrap();
         let find = win.find.clone();
@@ -333,7 +345,14 @@ impl App {
                 render::draw_tiles(c, area, &frames, &damage, divider);
             }
             if chrome_dirty {
-                let frame = BarFrame { layout: &win.bar, items: &items, hover: hover_hit, dragging: drag, active: key, width: cw };
+                let frame = BarFrame {
+                    layout: &win.bar,
+                    items: &items,
+                    hover: hover_hit,
+                    dragging: drag,
+                    active: key,
+                    width: cw,
+                };
                 chrome::draw_bar(c, &frame, &fonts, &col, scale);
                 let mut strip_y = chrome::BAR_H;
                 if let Some(n) = reopen {
@@ -350,7 +369,18 @@ impl App {
                     && !has_panel
                 {
                     let l = chrome::find_layout(cw, ch - chrome::STRIP_H);
-                    chrome::draw_find(c, &l, &f.field, &f.status, find_focused, hover_hit, &fonts, &col, scale, caret_on);
+                    chrome::draw_find(
+                        c,
+                        &l,
+                        &f.field,
+                        &f.status,
+                        find_focused,
+                        hover_hit,
+                        &fonts,
+                        &col,
+                        scale,
+                        caret_on,
+                    );
                 }
             }
             // A panel over the terminal.
@@ -382,7 +412,17 @@ impl App {
             }
             if let Some(d) = &win.dialog {
                 let l = d.layout(&fonts.title, &fonts.label, scale, cw, ch);
-                ui::draw_dialog(c, d, &l, &fonts.title, &fonts.label, &col, scale, Rect::new(0.0, 0.0, cw, ch), caret_on);
+                ui::draw_dialog(
+                    c,
+                    d,
+                    &l,
+                    &fonts.title,
+                    &fonts.label,
+                    &col,
+                    scale,
+                    Rect::new(0.0, 0.0, cw, ch),
+                    caret_on,
+                );
             }
         });
         let _ = full;

@@ -248,12 +248,18 @@ pub fn request_quit() {
     later(|a| {
         let summary = if a.quitting { None } else { a.quit_summary() };
         match summary {
-            Some(s) => a.ask("Quit CTX?", &format!("These are still running and will be stopped:\n{s}"), "Quit", "Cancel", |a, yes| {
-                if yes {
-                    a.quit_now();
-                    terminate();
-                }
-            }),
+            Some(s) => a.ask(
+                "Quit CTX?",
+                &format!("These are still running and will be stopped:\n{s}"),
+                "Quit",
+                "Cancel",
+                |a, yes| {
+                    if yes {
+                        a.quit_now();
+                        terminate();
+                    }
+                },
+            ),
             None => {
                 a.quit_now();
                 terminate();
@@ -291,7 +297,8 @@ pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usi
     let mut attrs = Window::default_attributes().with_title("CTX");
     match frame {
         Some([x, y, w, h]) => {
-            attrs = attrs.with_inner_size(LogicalSize::new(w, h)).with_position(PhysicalPosition::new(x as i32, y as i32));
+            attrs =
+                attrs.with_inner_size(LogicalSize::new(w, h)).with_position(PhysicalPosition::new(x as i32, y as i32));
         }
         None => {
             attrs = attrs.with_inner_size(LogicalSize::new(size.0, size.1));
@@ -653,10 +660,14 @@ fn window_event(id: WindowId, event: WindowEvent) {
             if event.state != ElementState::Pressed {
                 return;
             }
-            let (flags, mods) = INPUT.with(|i| i.borrow().get(&id).map(|st| (flags_of(st), st.mods)).unwrap_or_default());
+            let (flags, mods) =
+                INPUT.with(|i| i.borrow().get(&id).map(|st| (flags_of(st), st.mods)).unwrap_or_default());
             let base = event.key_without_modifiers();
             // Ctrl+Shift(+Alt) is the ⌘ of this platform.
-            if mods.control_key() && mods.shift_key() && let Some(k) = shortcut_key(&base) {
+            if mods.control_key()
+                && mods.shift_key()
+                && let Some(k) = shortcut_key(&base)
+            {
                 let want = if mods.alt_key() { keys::COMMAND | keys::SHIFT } else { keys::COMMAND };
                 let action = with_app(|a| {
                     a.bindings.iter().find_map(|(act, s)| match keys::parse_shortcut(s) {
@@ -695,7 +706,10 @@ fn window_event(id: WindowId, event: WindowEvent) {
                 None => {
                     let p2 = p.clone();
                     later(move |a| {
-                        if a.key_down(w, &p2) == keys::Input::TextInput && !p2.chars.is_empty() && !p2.chars.chars().any(|c| c.is_control()) {
+                        if a.key_down(w, &p2) == keys::Input::TextInput
+                            && !p2.chars.is_empty()
+                            && !p2.chars.chars().any(|c| c.is_control())
+                        {
                             a.insert_text(w, &p2.chars);
                         }
                     });
@@ -759,7 +773,8 @@ fn window_event(id: WindowId, event: WindowEvent) {
             }
         }
         WindowEvent::MouseWheel { delta, .. } => {
-            let (x, y, flags) = INPUT.with(|i| i.borrow().get(&id).map(|st| (st.pos.0, st.pos.1, flags_of(st))).unwrap_or_default());
+            let (x, y, flags) =
+                INPUT.with(|i| i.borrow().get(&id).map(|st| (st.pos.0, st.pos.1, flags_of(st))).unwrap_or_default());
             let k = scale_of(w);
             let (dx, dy, precise) = match delta {
                 MouseScrollDelta::LineDelta(dx, dy) => (dx as f64, dy as f64, false),

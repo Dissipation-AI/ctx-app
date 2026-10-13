@@ -307,7 +307,16 @@ pub fn field_key(p: &Press) -> Option<FieldKey> {
 
 /// Draw a field in `r` (pixels). Returns the x where its text starts (for clicks).
 #[allow(clippy::too_many_arguments)]
-pub fn draw_field<C: Canvas>(c: &mut C, f: &Field, r: Rect, font: &UiFont, col: &Colors, focused: bool, s: f64, caret_on: bool) {
+pub fn draw_field<C: Canvas>(
+    c: &mut C,
+    f: &Field,
+    r: Rect,
+    font: &UiFont,
+    col: &Colors,
+    focused: bool,
+    s: f64,
+    caret_on: bool,
+) {
     c.fill_rounded(col.field, 1.0, r.x, r.y, r.w, r.h, [6.0 * s; 4]);
     if focused {
         // A focus ring.
@@ -352,13 +361,20 @@ pub enum MenuAction {
     Perform(Action),
     NewTabIn(u64),
     /// Open a tab in `folder` and type `command` at its prompt (without pressing Enter).
-    Launch { window: u64, folder: String, command: String },
+    Launch {
+        window: u64,
+        folder: String,
+        command: String,
+    },
     Rename(u64),
     Close(u64),
     Tile(u64),
     Untile(u64),
     MoveToNewWindow(u64),
-    Theme { tab: u64, name: Option<String> },
+    Theme {
+        tab: u64,
+        name: Option<String>,
+    },
     ShowTab(u64),
     Reopen(u64),
 }
@@ -377,7 +393,14 @@ pub struct MenuItem {
 
 impl MenuItem {
     pub fn new(label: &str, action: MenuAction) -> MenuItem {
-        MenuItem { label: label.to_string(), detail: None, shortcut: None, action: Some(action), checked: false, swatch: None }
+        MenuItem {
+            label: label.to_string(),
+            detail: None,
+            shortcut: None,
+            action: Some(action),
+            checked: false,
+            swatch: None,
+        }
     }
 
     pub fn separator() -> MenuItem {
@@ -462,12 +485,29 @@ impl Menu {
 
 /// Draw a menu. `s` is the backing scale.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_menu<C: Canvas>(c: &mut C, m: &Menu, frame: Rect, rows: &[Rect], label: &UiFont, small: &UiFont, col: &Colors, s: f64) {
+pub fn draw_menu<C: Canvas>(
+    c: &mut C,
+    m: &Menu,
+    frame: Rect,
+    rows: &[Rect],
+    label: &UiFont,
+    small: &UiFont,
+    col: &Colors,
+    s: f64,
+) {
     let px = |r: Rect| Rect::new(r.x * s, r.y * s, r.w * s, r.h * s);
     let f = px(frame);
     // A soft shadow, then the body.
     for (i, a) in [(3.0, 0.10), (2.0, 0.12), (1.0, 0.16)] {
-        c.fill_rounded([0, 0, 0], a, f.x - i * s, f.y - i * s + 2.0 * s, f.w + 2.0 * i * s, f.h + 2.0 * i * s, [(9.0 + i) * s; 4]);
+        c.fill_rounded(
+            [0, 0, 0],
+            a,
+            f.x - i * s,
+            f.y - i * s + 2.0 * s,
+            f.w + 2.0 * i * s,
+            f.h + 2.0 * i * s,
+            [(9.0 + i) * s; 4],
+        );
     }
     c.fill_rounded(col.panel, 1.0, f.x, f.y, f.w, f.h, [9.0 * s; 4]);
     for (i, (it, r)) in m.items.iter().zip(rows).enumerate() {
@@ -480,7 +520,13 @@ pub fn draw_menu<C: Canvas>(c: &mut C, m: &Menu, frame: Rect, rows: &[Rect], lab
         if m.hover == Some(i) && !heading {
             c.fill_rounded(col.accent, 0.9, r.x, r.y, r.w, r.h, [5.0 * s; 4]);
         }
-        let fg = if m.hover == Some(i) && !heading { [255, 255, 255] } else if heading { col.dim } else { col.text };
+        let fg = if m.hover == Some(i) && !heading {
+            [255, 255, 255]
+        } else if heading {
+            col.dim
+        } else {
+            col.text
+        };
         let ty = r.y + ((r.h - label.height()) / 2.0).round();
         let mut x = r.x + 22.0 * s;
         if it.checked {
@@ -537,7 +583,8 @@ impl Dialog {
         let width = 420.0f64.min(w - 24.0);
         let inner = (width - 40.0) * scale;
         let lines = wrap(&self.text, body, inner);
-        let mut height = 20.0 + title.height() / scale + 10.0 + lines.len() as f64 * (body.height() / scale + 3.0) + 16.0;
+        let mut height =
+            20.0 + title.height() / scale + 10.0 + lines.len() as f64 * (body.height() / scale + 3.0) + 16.0;
         let field_y = height;
         if self.field.is_some() {
             height += 36.0;
@@ -616,7 +663,15 @@ pub fn draw_dialog<C: Canvas>(
         c.fill_rounded(fill, if d.hover == Some(i) { 0.85 } else { 1.0 }, r.x, r.y, r.w, r.h, [7.0 * s; 4]);
         let tw = body.measure(b);
         let fg = if default { [255, 255, 255] } else { col.text };
-        c.text(body, b, r.x + ((r.w - tw) / 2.0).round(), r.y + ((r.h - body.height()) / 2.0).round(), r.w, fg, Trunc::Tail);
+        c.text(
+            body,
+            b,
+            r.x + ((r.w - tw) / 2.0).round(),
+            r.y + ((r.h - body.height()) / 2.0).round(),
+            r.w,
+            fg,
+            Trunc::Tail,
+        );
     }
 }
 

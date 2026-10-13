@@ -142,7 +142,11 @@ impl Row {
                     r.text.push_str(c.text);
                     r.cells.push([at, c.width as u16]);
                 }
-                _ => row.runs.push(StyledRun { text: c.text.to_string(), style: c.style, cells: vec![[0, c.width as u16]] }),
+                _ => row.runs.push(StyledRun {
+                    text: c.text.to_string(),
+                    style: c.style,
+                    cells: vec![[0, c.width as u16]],
+                }),
             }
             col += c.width;
         }
@@ -180,14 +184,31 @@ mod tests {
     #[test]
     fn the_terminals_grid_wins_over_unicode_tables() {
         // The server says "✔️" is one cell of width 1 here (say, mode 2027 off): trust it.
-        let r = Row { runs: vec![StyledRun { text: "✔️x".into(), style: CellStyle::default(), cells: vec![[0, 1], [6, 1]] }], wraps: false, event: false, links: Vec::new() };
+        let r = Row {
+            runs: vec![StyledRun { text: "✔️x".into(), style: CellStyle::default(), cells: vec![[0, 1], [6, 1]] }],
+            wraps: false,
+            event: false,
+            links: Vec::new(),
+        };
         let cells = r.cells(true);
-        assert_eq!(cells.iter().map(|c| (c.column, c.text, c.width)).collect::<Vec<_>>(), vec![(0, "✔️", 1), (1, "x", 1)]);
+        assert_eq!(
+            cells.iter().map(|c| (c.column, c.text, c.width)).collect::<Vec<_>>(),
+            vec![(0, "✔️", 1), (1, "x", 1)]
+        );
         // Without the grid the same text would be measured as two columns for the emoji.
         let guessed = Row::plain("✔️x");
         assert_eq!(guessed.cells(true)[1].column, 2);
         // Wrapping keeps the grid.
-        let long = Row { runs: vec![StyledRun { text: "中中中".into(), style: CellStyle::default(), cells: vec![[0, 2], [3, 2], [6, 2]] }], wraps: false, event: false, links: Vec::new() };
+        let long = Row {
+            runs: vec![StyledRun {
+                text: "中中中".into(),
+                style: CellStyle::default(),
+                cells: vec![[0, 2], [3, 2], [6, 2]],
+            }],
+            wraps: false,
+            event: false,
+            links: Vec::new(),
+        };
         let rows = long.wrap(5);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].runs[0].cells, vec![[0, 2], [3, 2]]);
@@ -200,7 +221,12 @@ mod tests {
 
     #[test]
     fn wide_flag_places_cells() {
-        let r = Row { runs: vec![styled("a", 0), styled("日本", WIDE), styled("b", 0)], wraps: false, event: false, links: Vec::new() };
+        let r = Row {
+            runs: vec![styled("a", 0), styled("日本", WIDE), styled("b", 0)],
+            wraps: false,
+            event: false,
+            links: Vec::new(),
+        };
         let cols: Vec<usize> = r.cells(false).iter().map(|c| c.column).collect();
         assert_eq!(cols, [0, 1, 3, 5]);
         assert_eq!(r.width(false), 6);

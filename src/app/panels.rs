@@ -175,7 +175,16 @@ pub fn record_rows(rec: &CommandOutputs, palette: &[[u8; 3]; 256]) -> Vec<Row> {
     let mut rows = Vec::new();
     let bold = CellStyle { flags: 1, ..Default::default() };
     if rec.commands.is_empty() {
-        rows.push(Row { runs: vec![StyledRun { text: "No commands were saved for this tab.".into(), style: CellStyle { flags: 4, ..Default::default() }, cells: Vec::new() }], wraps: false, event: false, links: Vec::new() });
+        rows.push(Row {
+            runs: vec![StyledRun {
+                text: "No commands were saved for this tab.".into(),
+                style: CellStyle { flags: 4, ..Default::default() },
+                cells: Vec::new(),
+            }],
+            wraps: false,
+            event: false,
+            links: Vec::new(),
+        });
     }
     for c in &rec.commands {
         let by = if c.ran_by == "you" { String::new() } else { format!("  (ran by {})", c.ran_by) };
@@ -183,10 +192,24 @@ pub fn record_rows(rec: &CommandOutputs, palette: &[[u8; 3]; 256]) -> Vec<Row> {
             Some(0) | None => String::new(),
             Some(n) => format!("  [exit {n}]"),
         };
-        rows.push(Row { runs: vec![StyledRun { text: format!("{} {}{by}{status}", c.location, c.command), style: bold, cells: Vec::new() }], wraps: false, event: false, links: Vec::new() });
+        rows.push(Row {
+            runs: vec![StyledRun {
+                text: format!("{} {}{by}{status}", c.location, c.command),
+                style: bold,
+                cells: Vec::new(),
+            }],
+            wraps: false,
+            event: false,
+            links: Vec::new(),
+        });
         let events: Vec<u64> = c.events.iter().map(|e| e.line).collect();
         for (i, line) in c.output.iter().enumerate() {
-            rows.push(Row { runs: ctx_protocol::sgr::runs(line, palette), wraps: false, event: events.contains(&(i as u64)), links: Vec::new() });
+            rows.push(Row {
+                runs: ctx_protocol::sgr::runs(line, palette),
+                wraps: false,
+                event: events.contains(&(i as u64)),
+                links: Vec::new(),
+            });
         }
         rows.push(Row::default());
     }
@@ -206,12 +229,29 @@ pub enum Font {
 }
 
 pub enum Op {
-    Fill { c: Rgb, a: f64, radius: f64 },
-    Text { font: Font, s: String, c: Rgb, trunc: Trunc },
+    Fill {
+        c: Rgb,
+        a: f64,
+        radius: f64,
+    },
+    Text {
+        font: Font,
+        s: String,
+        c: Rgb,
+        trunc: Trunc,
+    },
     Field,
-    Stroke { path: Vec<PathOp>, w: f64, c: Rgb },
+    Stroke {
+        path: Vec<PathOp>,
+        w: f64,
+        c: Rgb,
+    },
     /// Terminal rows (History's viewer), drawn as the terminal draws them.
-    Mono { rows: Vec<Row>, fg: Rgb, bg: Rgb },
+    Mono {
+        rows: Vec<Row>,
+        fg: Rgb,
+        bg: Rgb,
+    },
     Clip(Option<Rect>),
 }
 
@@ -262,9 +302,21 @@ fn hit(items: &mut Vec<Item>, r: Rect, h: PanelHit) {
 fn chip(items: &mut Vec<Item>, ctx: &Ctx, x: f64, y: f64, label: &str, on: bool, hover: bool, h: PanelHit) -> f64 {
     let w = ctx.fonts.small.measure(label) / ctx.scale + 18.0;
     let r = Rect::new(x, y, w, 22.0);
-    let bg = if on { mix(ctx.col.accent, ctx.col.panel, 0.25) } else if hover { ctx.col.hover } else { ctx.col.field };
+    let bg = if on {
+        mix(ctx.col.accent, ctx.col.panel, 0.25)
+    } else if hover {
+        ctx.col.hover
+    } else {
+        ctx.col.field
+    };
     fill(items, r, bg, 11.0);
-    text(items, Rect::new(x + 9.0, y + 3.0, w - 14.0, 16.0), Font::Small, label, if on { [255, 255, 255] } else { ctx.col.text });
+    text(
+        items,
+        Rect::new(x + 9.0, y + 3.0, w - 14.0, 16.0),
+        Font::Small,
+        label,
+        if on { [255, 255, 255] } else { ctx.col.text },
+    );
     hit(items, r, h);
     w
 }
@@ -284,7 +336,16 @@ pub fn layout(p: &Panel, area: Rect, ctx: &Ctx) -> Vec<Item> {
     let (cx, cy, a) = (close.x + 14.0, close.y + 14.0, 5.0);
     items.push(Item {
         rect: close,
-        op: Op::Stroke { path: vec![PathOp::Move(cx - a, cy - a), PathOp::Line(cx + a, cy + a), PathOp::Move(cx + a, cy - a), PathOp::Line(cx - a, cy + a)], w: 1.5, c: col.dim },
+        op: Op::Stroke {
+            path: vec![
+                PathOp::Move(cx - a, cy - a),
+                PathOp::Line(cx + a, cy + a),
+                PathOp::Move(cx + a, cy - a),
+                PathOp::Line(cx - a, cy + a),
+            ],
+            w: 1.5,
+            c: col.dim,
+        },
         hit: Some(PanelHit::Close),
     });
     let title_w = ctx.fonts.title.measure(p.kind.title()) / ctx.scale;
@@ -308,11 +369,7 @@ pub fn layout(p: &Panel, area: Rect, ctx: &Ctx) -> Vec<Item> {
 
 /// The scroll region of a panel's main list (for wheel events): index into `scroll`.
 pub fn scroll_region(p: &Panel, area: Rect, x: f64) -> usize {
-    if p.kind == Kind::History && x > area.x + list_width(area) {
-        1
-    } else {
-        0
-    }
+    if p.kind == Kind::History && x > area.x + list_width(area) { 1 } else { 0 }
 }
 
 fn list_width(area: Rect) -> f64 {
@@ -329,7 +386,9 @@ fn history(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
         x += chip(items, ctx, x, y, label, p.who == w, p.hover == Some(PanelHit::Who(w)), PanelHit::Who(w)) + 4.0;
     }
     x += 10.0;
-    for (w, label) in [(When::Any, "Any time"), (When::Today, "Today"), (When::Week, "7 days"), (When::Month, "30 days")] {
+    for (w, label) in
+        [(When::Any, "Any time"), (When::Today, "Today"), (When::Week, "7 days"), (When::Month, "30 days")]
+    {
         x += chip(items, ctx, x, y, label, p.when == w, p.hover == Some(PanelHit::When(w)), PanelHit::When(w)) + 4.0;
     }
     let list_top = y + 30.0;
@@ -358,10 +417,16 @@ fn history(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
                 None => super::short_folder(&t.folder),
             };
             text(items, Rect::new(r.x + 10.0, r.y + 4.0, r.w - 20.0, 18.0), Font::Bold, title, col.text);
-            let by = if t.opened_by == "you" { String::new() } else { format!(" · {}", super::agent_name(&t.opened_by)) };
+            let by =
+                if t.opened_by == "you" { String::new() } else { format!(" · {}", super::agent_name(&t.opened_by)) };
             let ended = if t.ended == "interrupted" { " · interrupted" } else { "" };
             let commands = if t.commands == 1 { "1 command".to_string() } else { format!("{} commands", t.commands) };
-            let detail = format!("tab {} · {} · {commands}{by}{ended} · {}", t.number, ago(&t.closed_at), super::short_folder(&t.folder));
+            let detail = format!(
+                "tab {} · {} · {commands}{by}{ended} · {}",
+                t.number,
+                ago(&t.closed_at),
+                super::short_folder(&t.folder)
+            );
             text(items, Rect::new(r.x + 10.0, r.y + 22.0, r.w - 20.0, 16.0), Font::Small, detail, col.dim);
             hit(items, r, PanelHit::Closed(t.number));
         }
@@ -372,12 +437,23 @@ fn history(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
     let vx = body.x + lw + 1.0;
     let viewer = Rect::new(vx, list_top, body.x + body.w - vx, body.y + body.h - list_top);
     let Some(sel) = p.selected else {
-        text(items, Rect::new(vx + 16.0, list_top + 12.0, viewer.w - 32.0, 18.0), Font::Label, "Choose a closed tab to see its saved commands and output.", col.dim);
+        text(
+            items,
+            Rect::new(vx + 16.0, list_top + 12.0, viewer.w - 32.0, 18.0),
+            Font::Label,
+            "Choose a closed tab to see its saved commands and output.",
+            col.dim,
+        );
         return;
     };
     let bg = (ctx.tab_bg)(0);
     let reopen = Rect::new(viewer.x + viewer.w - 104.0, viewer.y + 8.0, 92.0, 26.0);
-    fill(items, reopen, if p.hover == Some(PanelHit::Reopen(sel)) { mix(col.accent, [255, 255, 255], 0.15) } else { col.accent }, 7.0);
+    fill(
+        items,
+        reopen,
+        if p.hover == Some(PanelHit::Reopen(sel)) { mix(col.accent, [255, 255, 255], 0.15) } else { col.accent },
+        7.0,
+    );
     text(items, Rect::new(reopen.x + 18.0, reopen.y + 5.0, 70.0, 16.0), Font::Label, "Reopen", [255, 255, 255]);
     hit(items, reopen, PanelHit::Reopen(sel));
     if let Some(t) = p.closed.iter().find(|t| t.number == sel) {
@@ -408,7 +484,13 @@ fn activity(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
     items.push(Item { rect: clip, op: Op::Clip(Some(clip)), hit: None });
     let mut y = body.y + 8.0 - p.scroll[0];
     if ctx.activity.is_empty() {
-        text(items, Rect::new(body.x + 16.0, y + 6.0, body.w - 32.0, 18.0), Font::Label, "Nothing other than you has touched a tab yet.", col.dim);
+        text(
+            items,
+            Rect::new(body.x + 16.0, y + 6.0, body.w - 32.0, 18.0),
+            Font::Label,
+            "Nothing other than you has touched a tab yet.",
+            col.dim,
+        );
     }
     let row_h = 42.0;
     for e in ctx.activity.iter().rev() {
@@ -449,7 +531,11 @@ fn find_all(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
     let mut y = body.y + 8.0 - p.scroll[0];
     match &p.found {
         None => {
-            let msg = if p.searching { "Searching…" } else { "Type what to find above and press Return. Every tab is searched, open and closed." };
+            let msg = if p.searching {
+                "Searching…"
+            } else {
+                "Type what to find above and press Return. Every tab is searched, open and closed."
+            };
             text(items, Rect::new(body.x + 16.0, y + 6.0, body.w - 32.0, 18.0), Font::Label, msg, col.dim);
         }
         Some(f) if f.hits.is_empty() => {
@@ -473,11 +559,23 @@ fn find_all(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
                     let head = format!("tab {}{name}", h.tab);
                     let hw = ctx.fonts.label_bold.measure(&head) / ctx.scale;
                     text(items, Rect::new(r.x + 10.0, r.y + 4.0, r.w - 20.0, 18.0), Font::Bold, head, col.accent);
-                    text(items, Rect::new(r.x + 18.0 + hw, r.y + 5.0, r.w - hw - 30.0, 16.0), Font::Small, format!("{what} · {}", ago(&h.at)), col.dim);
+                    text(
+                        items,
+                        Rect::new(r.x + 18.0 + hw, r.y + 5.0, r.w - hw - 30.0, 16.0),
+                        Font::Small,
+                        format!("{what} · {}", ago(&h.at)),
+                        col.dim,
+                    );
                     let mut ly = r.y + 24.0;
                     for (k, l) in h.before.iter().chain(std::iter::once(&h.text)).chain(h.after.iter()).enumerate() {
                         let main = k == h.before.len();
-                        text(items, Rect::new(r.x + 18.0, ly, r.w - 30.0, 16.0), if main { Font::Label } else { Font::Small }, l.clone(), if main { col.text } else { col.faint });
+                        text(
+                            items,
+                            Rect::new(r.x + 18.0, ly, r.w - 30.0, 16.0),
+                            if main { Font::Label } else { Font::Small },
+                            l.clone(),
+                            if main { col.text } else { col.faint },
+                        );
                         ly += 17.0;
                     }
                     hit(items, r, PanelHit::Found(i));
@@ -521,7 +619,8 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
         if tabs.is_empty() && !words.is_empty() {
             continue;
         }
-        let heights: Vec<f64> = tabs.iter().map(|t| (process_rows(ctx, t.number) as f64 * PROC_H).max(card_h)).collect();
+        let heights: Vec<f64> =
+            tabs.iter().map(|t| (process_rows(ctx, t.number) as f64 * PROC_H).max(card_h)).collect();
         let group_h = (heights.iter().map(|h| h + gap).sum::<f64>() - gap).max(card_h);
         // Window card, centred on its tabs.
         let wy = y + (group_h - card_h) / 2.0;
@@ -545,7 +644,15 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
             let (x0, y0) = (wr.x + ww, wr.y + card_h / 2.0);
             let (x1, y1) = (tx, ty + card_h / 2.0);
             let mx = (x0 + x1) / 2.0;
-            items.push(Item { rect: body, op: Op::Stroke { path: vec![PathOp::Move(x0, y0), PathOp::Line(mx, y0), PathOp::Line(mx, y1), PathOp::Line(x1, y1)], w: 1.2, c: line }, hit: None });
+            items.push(Item {
+                rect: body,
+                op: Op::Stroke {
+                    path: vec![PathOp::Move(x0, y0), PathOp::Line(mx, y0), PathOp::Line(mx, y1), PathOp::Line(x1, y1)],
+                    w: 1.2,
+                    c: line,
+                },
+                hit: None,
+            });
             let tr = Rect::new(tx, ty, tw, card_h);
             let ghost = dragging == Some(t.number);
             let bg = (ctx.tab_bg)(t.number);
@@ -570,15 +677,26 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
             text(items, Rect::new(tr.x + 28.0, tr.y + 25.0, tw - 40.0, 16.0), Font::Small, folder, [170, 170, 170]);
             hit(items, tr, PanelHit::Card(t.number));
             // What runs in it: the processes under its shell, as a tree.
-            let procs: Vec<&ProcessInfo> = ctx.processes.get(&t.number).map(|v| v.iter().filter(|p| p.depth > 0).collect()).unwrap_or_default();
+            let procs: Vec<&ProcessInfo> =
+                ctx.processes.get(&t.number).map(|v| v.iter().filter(|p| p.depth > 0).collect()).unwrap_or_default();
             let status = ctx.statuses.get(&t.number).copied().unwrap_or(Status::Idle);
             if procs.is_empty() {
                 if let Some(run) = &t.running {
                     let (x0, y0) = (tr.x + tw, tr.y + card_h / 2.0);
-                    items.push(Item { rect: body, op: Op::Stroke { path: vec![PathOp::Move(x0, y0), PathOp::Line(px_, y0)], w: 1.2, c: line }, hit: None });
+                    items.push(Item {
+                        rect: body,
+                        op: Op::Stroke { path: vec![PathOp::Move(x0, y0), PathOp::Line(px_, y0)], w: 1.2, c: line },
+                        hit: None,
+                    });
                     let pr = Rect::new(px_, ty + 6.0, pw, PROC_H - 4.0);
                     fill(items, pr, col.field, 7.0);
-                    text(items, Rect::new(pr.x + 10.0, pr.y + 5.0, pw - 20.0, 16.0), Font::Label, run.clone(), col.text);
+                    text(
+                        items,
+                        Rect::new(pr.x + 10.0, pr.y + 5.0, pw - 20.0, 16.0),
+                        Font::Label,
+                        run.clone(),
+                        col.text,
+                    );
                     hit(items, pr, PanelHit::Card(t.number));
                 }
             } else {
@@ -605,7 +723,13 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
                     let agent = super::AGENTS.contains(&prog) || super::AGENTS.contains(&pr_.name.as_str());
                     fill(items, pr, if agent { mix(col.agent, col.field, 0.82) } else { col.field }, 7.0);
                     let nw = ctx.fonts.label_bold.measure(&pr_.name) / ctx.scale;
-                    text(items, Rect::new(pr.x + 10.0, pr.y + 5.0, pr.w - 70.0, 16.0), Font::Bold, pr_.name.clone(), col.text);
+                    text(
+                        items,
+                        Rect::new(pr.x + 10.0, pr.y + 5.0, pr.w - 70.0, 16.0),
+                        Font::Bold,
+                        pr_.name.clone(),
+                        col.text,
+                    );
                     let mut detail = pr_.command.clone();
                     if agent {
                         let st = match status {
@@ -617,8 +741,20 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
                             detail = format!("{st} · {detail}");
                         }
                     }
-                    text(items, Rect::new(pr.x + 18.0 + nw, pr.y + 6.0, (pr.w - nw - 88.0).max(20.0), 16.0), Font::Small, detail, if agent { col.agent } else { col.dim });
-                    text(items, Rect::new(pr.x + pr.w - 64.0, pr.y + 6.0, 58.0, 16.0), Font::Small, format!("{}", pr_.pid), col.faint);
+                    text(
+                        items,
+                        Rect::new(pr.x + 18.0 + nw, pr.y + 6.0, (pr.w - nw - 88.0).max(20.0), 16.0),
+                        Font::Small,
+                        detail,
+                        if agent { col.agent } else { col.dim },
+                    );
+                    text(
+                        items,
+                        Rect::new(pr.x + pr.w - 64.0, pr.y + 6.0, 58.0, 16.0),
+                        Font::Small,
+                        format!("{}", pr_.pid),
+                        col.faint,
+                    );
                     hit(items, pr, PanelHit::Card(t.number));
                 }
             }
@@ -653,9 +789,23 @@ pub fn content_height(p: &Panel, ctx: &Ctx) -> [f64; 2] {
     let main = match p.kind {
         Kind::History => p.visible_closed().len() as f64 * 44.0 + 40.0,
         Kind::Activity => ctx.activity.len() as f64 * 42.0 + 16.0,
-        Kind::FindAll => p.found.as_ref().map(|f| f.hits.iter().map(|h| 32.0 + (h.before.len() + 1 + h.after.len()) as f64 * 17.0).sum()).unwrap_or(0.0) + 16.0,
+        Kind::FindAll => {
+            p.found
+                .as_ref()
+                .map(|f| f.hits.iter().map(|h| 32.0 + (h.before.len() + 1 + h.after.len()) as f64 * 17.0).sum())
+                .unwrap_or(0.0)
+                + 16.0
+        }
         Kind::Overview => {
-            ctx.list.windows.iter().map(|w| w.tabs.iter().map(|t| (process_rows(ctx, t.number) as f64 * PROC_H).max(46.0) + 10.0).sum::<f64>() + 28.0).sum::<f64>() + 80.0
+            ctx.list
+                .windows
+                .iter()
+                .map(|w| {
+                    w.tabs.iter().map(|t| (process_rows(ctx, t.number) as f64 * PROC_H).max(46.0) + 10.0).sum::<f64>()
+                        + 28.0
+                })
+                .sum::<f64>()
+                + 80.0
         }
     };
     let viewer = p.records.as_ref().map(|(_, r)| r.len() as f64 * ctx.mono.cell_h / ctx.scale + 40.0).unwrap_or(0.0);
@@ -692,7 +842,9 @@ pub fn draw<C: Canvas>(c: &mut C, p: &Panel, items: &[Item], ctx: &Ctx, caret_on
                     .map(|op| match *op {
                         PathOp::Move(x, y) => PathOp::Move(x * s, y * s),
                         PathOp::Line(x, y) => PathOp::Line(x * s, y * s),
-                        PathOp::ArcTo { x1, y1, x2, y2, r } => PathOp::ArcTo { x1: x1 * s, y1: y1 * s, x2: x2 * s, y2: y2 * s, r: r * s },
+                        PathOp::ArcTo { x1, y1, x2, y2, r } => {
+                            PathOp::ArcTo { x1: x1 * s, y1: y1 * s, x2: x2 * s, y2: y2 * s, r: r * s }
+                        }
                     })
                     .collect();
                 c.stroke(&path, w * s, *col, 1.0);
@@ -715,7 +867,13 @@ pub fn draw<C: Canvas>(c: &mut C, p: &Panel, items: &[Item], ctx: &Ctx, caret_on
                     marked: None,
                     scrolled: None,
                 };
-                crate::render::draw_tiles(c, (r.x, r.y, r.w, r.h), std::slice::from_ref(&tile), &crate::render::Damage::All, *bg);
+                crate::render::draw_tiles(
+                    c,
+                    (r.x, r.y, r.w, r.h),
+                    std::slice::from_ref(&tile),
+                    &crate::render::Damage::All,
+                    *bg,
+                );
             }
             Op::Clip(rect) => {
                 if it.hit.is_none() {

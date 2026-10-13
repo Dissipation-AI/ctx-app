@@ -74,13 +74,20 @@ pub enum Button {
     Activity,
 }
 
-pub const BUTTONS: [(Button, &str); 3] =
-    [(Button::Overview, "Overview (all windows and tabs)"), (Button::History, "History of closed tabs (⌘Y)"), (Button::Activity, "Activity of other programs (⇧⌘A)")];
+pub const BUTTONS: [(Button, &str); 3] = [
+    (Button::Overview, "Overview (all windows and tabs)"),
+    (Button::History, "History of closed tabs (⌘Y)"),
+    (Button::Activity, "Activity of other programs (⇧⌘A)"),
+];
 
 /// Where the pointer is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
-    Tab { tab: u64, index: usize, close: bool },
+    Tab {
+        tab: u64,
+        index: usize,
+        close: bool,
+    },
     Plus,
     Button(Button),
     ScrollLeft,
@@ -137,8 +144,11 @@ pub fn bar_layout(ids: &[u64], w: f64, inset: f64, scroll: f64) -> BarLayout {
     };
     let max_scroll = (tw * ids.len() as f64 - sw).max(0.0);
     let scroll = scroll.clamp(0.0, max_scroll);
-    let tabs: Vec<(u64, Rect)> =
-        ids.iter().enumerate().map(|(i, t)| (*t, Rect::new(sx + i as f64 * tw - scroll, TAB_TOP, tw, BAR_H - TAB_TOP))).collect();
+    let tabs: Vec<(u64, Rect)> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (*t, Rect::new(sx + i as f64 * tw - scroll, TAB_TOP, tw, BAR_H - TAB_TOP)))
+        .collect();
     let plus_x = if overflow { sx + sw + CHEVRON_W } else { sx + tw * ids.len() as f64 + 2.0 };
     BarLayout {
         tabs,
@@ -230,7 +240,10 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
     let strip = px(f.layout.strip, s);
     c.clip(Some((strip.x, 0.0, strip.w, bar.h)));
     // Unselected tabs first, so the selected one's curves sit on top.
-    let order: Vec<usize> = (0..f.items.len()).filter(|i| !f.items[*i].selected).chain((0..f.items.len()).filter(|i| f.items[*i].selected)).collect();
+    let order: Vec<usize> = (0..f.items.len())
+        .filter(|i| !f.items[*i].selected)
+        .chain((0..f.items.len()).filter(|i| f.items[*i].selected))
+        .collect();
     for i in order {
         let item = &f.items[i];
         let Some((_, mut r)) = f.layout.tabs.get(i).copied() else { continue };
@@ -242,10 +255,23 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
         let hover = matches!(f.hover, Some(Hit::Tab { index, .. }) if index == i);
         let hovered = |j: usize| matches!(f.hover, Some(Hit::Tab { index, .. }) if index == j);
         let beside = |j: Option<usize>| {
-            j.and_then(|j| f.items.get(j).map(|n| (j, n))).and_then(|(j, n)| unselected_fill(n, hovered(j), col)).unwrap_or(col.bar)
+            j.and_then(|j| f.items.get(j).map(|n| (j, n)))
+                .and_then(|(j, n)| unselected_fill(n, hovered(j), col))
+                .unwrap_or(col.bar)
         };
         let feet = (beside(i.checked_sub(1)), beside(Some(i + 1)));
-        draw_tab(c, item, px(r, s), hover, matches!(f.hover, Some(Hit::Tab { index, close: true, .. }) if index == i), feet, fonts, col, s, f.active);
+        draw_tab(
+            c,
+            item,
+            px(r, s),
+            hover,
+            matches!(f.hover, Some(Hit::Tab { index, close: true, .. }) if index == i),
+            feet,
+            fonts,
+            col,
+            s,
+            f.active,
+        );
         // A thin separator between plain unselected neighbours.
         let next = f.items.get(i + 1);
         let plain = |n: &TabItem, j: usize| !n.selected && unselected_fill(n, hovered(j), col).is_none();
@@ -260,10 +286,26 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
         if let Some(r) = r {
             let r = px(r, s);
             if f.hover == Some(h) {
-                c.fill_rounded(col.hover, 1.0, r.x + 1.0 * s, r.y + 4.0 * s, r.w - 2.0 * s, r.h - 10.0 * s, [5.0 * s; 4]);
+                c.fill_rounded(
+                    col.hover,
+                    1.0,
+                    r.x + 1.0 * s,
+                    r.y + 4.0 * s,
+                    r.w - 2.0 * s,
+                    r.h - 10.0 * s,
+                    [5.0 * s; 4],
+                );
             }
             let tw = fonts.label_bold.measure(glyph);
-            c.text(&fonts.label_bold, glyph, r.x + (r.w - tw) / 2.0, r.y + (r.h - fonts.label_bold.height()) / 2.0 - 2.0 * s, r.w, col.dim, Trunc::Tail);
+            c.text(
+                &fonts.label_bold,
+                glyph,
+                r.x + (r.w - tw) / 2.0,
+                r.y + (r.h - fonts.label_bold.height()) / 2.0 - 2.0 * s,
+                r.w,
+                col.dim,
+                Trunc::Tail,
+            );
         }
     }
     // The + button.
@@ -330,7 +372,12 @@ fn draw_tab<C: Canvas>(
             c.fill_rounded(col.hover, 1.0, cr.x, cr.y, cr.w, cr.h, [4.0 * s; 4]);
         }
         let (cx, cy, a) = (cr.x + cr.w / 2.0, cr.y + cr.h / 2.0, 3.5 * s);
-        let path = [PathOp::Move(cx - a, cy - a), PathOp::Line(cx + a, cy + a), PathOp::Move(cx + a, cy - a), PathOp::Line(cx - a, cy + a)];
+        let path = [
+            PathOp::Move(cx - a, cy - a),
+            PathOp::Line(cx + a, cy + a),
+            PathOp::Move(cx + a, cy - a),
+            PathOp::Line(cx - a, cy + a),
+        ];
         c.stroke(&path, 1.4 * s, col.dim, 1.0);
         left = cr.x + cr.w + 6.0 * s;
     }
@@ -427,11 +474,16 @@ fn draw_icon<C: Canvas>(c: &mut C, b: Button, r: Rect, col: Rgb, s: f64) {
                 path.push(if i == 0 { PathOp::Move(p.0, p.1) } else { PathOp::Line(p.0, p.1) });
             }
             c.stroke(&path, lw, col, 1.0);
-            let hands = [PathOp::Move(cx, cy - 4.0 * s), PathOp::Line(cx, cy), PathOp::Line(cx + 3.0 * s, cy + 2.0 * s)];
+            let hands =
+                [PathOp::Move(cx, cy - 4.0 * s), PathOp::Line(cx, cy), PathOp::Line(cx + 3.0 * s, cy + 2.0 * s)];
             c.stroke(&hands, lw, col, 1.0);
             let a0 = -2.4f64;
             let tip = (cx + rad * a0.cos(), cy + rad * a0.sin());
-            let head = [PathOp::Move(tip.0 - 3.0 * s, tip.1 - 0.5 * s), PathOp::Line(tip.0, tip.1), PathOp::Line(tip.0 + 0.5 * s, tip.1 - 3.2 * s)];
+            let head = [
+                PathOp::Move(tip.0 - 3.0 * s, tip.1 - 0.5 * s),
+                PathOp::Line(tip.0, tip.1),
+                PathOp::Line(tip.0 + 0.5 * s, tip.1 - 3.2 * s),
+            ];
             c.stroke(&head, lw, col, 1.0);
         }
         Button::Activity => {
@@ -497,17 +549,45 @@ impl FindLayout {
 
 /// A rounded push button with centred text.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_button<C: Canvas>(c: &mut C, r: Rect, label: &str, font: &UiFont, col: &Colors, s: f64, hover: bool, primary: bool) {
+pub fn draw_button<C: Canvas>(
+    c: &mut C,
+    r: Rect,
+    label: &str,
+    font: &UiFont,
+    col: &Colors,
+    s: f64,
+    hover: bool,
+    primary: bool,
+) {
     let r = px(r, s);
     let fill = if primary { col.accent } else { col.field };
     c.fill_rounded(fill, if hover { 0.8 } else { 1.0 }, r.x, r.y, r.w, r.h, [6.0 * s; 4]);
     let tw = font.measure(label);
     let fg = if primary { [255, 255, 255] } else { col.text };
-    c.text(font, label, r.x + ((r.w - tw) / 2.0).round(), r.y + ((r.h - font.height()) / 2.0).round(), r.w, fg, Trunc::Tail);
+    c.text(
+        font,
+        label,
+        r.x + ((r.w - tw) / 2.0).round(),
+        r.y + ((r.h - font.height()) / 2.0).round(),
+        r.w,
+        fg,
+        Trunc::Tail,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn draw_find<C: Canvas>(c: &mut C, l: &FindLayout, field: &Field, status: &str, focused: bool, hover: Option<Hit>, fonts: &ChromeFonts, col: &Colors, s: f64, caret_on: bool) {
+pub fn draw_find<C: Canvas>(
+    c: &mut C,
+    l: &FindLayout,
+    field: &Field,
+    status: &str,
+    focused: bool,
+    hover: Option<Hit>,
+    fonts: &ChromeFonts,
+    col: &Colors,
+    s: f64,
+    caret_on: bool,
+) {
     let b = px(l.bar, s);
     c.fill(col.bar, 1.0, b.x, b.y, b.w, b.h);
     c.fill(col.line, 1.0, b.x, b.y, b.w, s.max(1.0));
@@ -562,21 +642,53 @@ pub fn paste_preview(text: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn draw_paste<C: Canvas>(c: &mut C, l: &ReopenLayout, text: &str, hover: Option<Hit>, fonts: &ChromeFonts, col: &Colors, s: f64) {
+pub fn draw_paste<C: Canvas>(
+    c: &mut C,
+    l: &ReopenLayout,
+    text: &str,
+    hover: Option<Hit>,
+    fonts: &ChromeFonts,
+    col: &Colors,
+    s: f64,
+) {
     let b = px(l.bar, s);
     c.fill(mix(col.bar, col.waiting, 0.14), 1.0, b.x, b.y, b.w, b.h);
     c.fill(col.line, 1.0, b.x, b.y + b.h - s.max(1.0), b.w, s.max(1.0));
-    c.text(&fonts.label, &paste_preview(text), b.x + 12.0 * s, b.y + (b.h - fonts.label.height()) / 2.0, (l.yes.x - 20.0) * s, col.text, Trunc::Tail);
+    c.text(
+        &fonts.label,
+        &paste_preview(text),
+        b.x + 12.0 * s,
+        b.y + (b.h - fonts.label.height()) / 2.0,
+        (l.yes.x - 20.0) * s,
+        col.text,
+        Trunc::Tail,
+    );
     draw_button(c, l.yes, "Paste", &fonts.label, col, s, hover == Some(Hit::PasteYes), true);
     draw_button(c, l.no, "Cancel", &fonts.label, col, s, hover == Some(Hit::PasteNo), false);
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn draw_reopen<C: Canvas>(c: &mut C, l: &ReopenLayout, text: &str, hover: Option<Hit>, fonts: &ChromeFonts, col: &Colors, s: f64) {
+pub fn draw_reopen<C: Canvas>(
+    c: &mut C,
+    l: &ReopenLayout,
+    text: &str,
+    hover: Option<Hit>,
+    fonts: &ChromeFonts,
+    col: &Colors,
+    s: f64,
+) {
     let b = px(l.bar, s);
     c.fill(mix(col.bar, col.accent, 0.12), 1.0, b.x, b.y, b.w, b.h);
     c.fill(col.line, 1.0, b.x, b.y + b.h - s.max(1.0), b.w, s.max(1.0));
-    c.text(&fonts.label, text, b.x + 12.0 * s, b.y + (b.h - fonts.label.height()) / 2.0, (l.yes.x - 20.0) * s, col.text, Trunc::Tail);
+    c.text(
+        &fonts.label,
+        text,
+        b.x + 12.0 * s,
+        b.y + (b.h - fonts.label.height()) / 2.0,
+        (l.yes.x - 20.0) * s,
+        col.text,
+        Trunc::Tail,
+    );
     draw_button(c, l.yes, "Reopen", &fonts.label, col, s, hover == Some(Hit::ReopenYes), true);
     draw_button(c, l.no, "Not Now", &fonts.label, col, s, hover == Some(Hit::ReopenNo), false);
 }

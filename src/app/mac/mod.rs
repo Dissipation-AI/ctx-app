@@ -416,14 +416,11 @@ fn place_traffic_lights(window: &NSWindow) {
     if !window.styleMask().contains(NSWindowStyleMask::FullSizeContentView) {
         return;
     }
-    let buttons: Vec<Retained<NSButton>> = [
-        NSWindowButton::CloseButton,
-        NSWindowButton::MiniaturizeButton,
-        NSWindowButton::ZoomButton,
-    ]
-    .into_iter()
-    .filter_map(|b| window.standardWindowButton(b))
-    .collect();
+    let buttons: Vec<Retained<NSButton>> =
+        [NSWindowButton::CloseButton, NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton]
+            .into_iter()
+            .filter_map(|b| window.standardWindowButton(b))
+            .collect();
     let Some(first) = buttons.first() else { return };
     // SAFETY: plain view hierarchy reads.
     let Some(container) = (unsafe { first.superview().and_then(|v| v.superview()) }) else { return };
@@ -451,7 +448,13 @@ pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usi
         style |= NSWindowStyleMask::FullSizeContentView;
     }
     let window = unsafe {
-        NSWindow::initWithContentRect_styleMask_backing_defer(NSWindow::alloc(mtm), content, style, NSBackingStoreType::Buffered, false)
+        NSWindow::initWithContentRect_styleMask_backing_defer(
+            NSWindow::alloc(mtm),
+            content,
+            style,
+            NSBackingStoreType::Buffered,
+            false,
+        )
     };
     unsafe { window.setReleasedWhenClosed(false) };
     window.setTabbingMode(NSWindowTabbingMode::Disallowed);
@@ -547,7 +550,9 @@ pub fn zoom(v: &Views) {
 /// A double-click on the empty bar does what the person chose in System Settings (zoom by
 /// default, or minimise, or nothing).
 pub fn title_double_click(v: &Views) {
-    let pref = NSUserDefaults::standardUserDefaults().stringForKey(&NSString::from_str("AppleActionOnDoubleClick")).map(|s| s.to_string());
+    let pref = NSUserDefaults::standardUserDefaults()
+        .stringForKey(&NSString::from_str("AppleActionOnDoubleClick"))
+        .map(|s| s.to_string());
     match pref.as_deref() {
         Some("Minimize") => v.window.miniaturize(None),
         Some("None") => {}
@@ -580,7 +585,9 @@ pub fn present(v: &Views, s: &Surface, scale: f64) {
         let current = unsafe { layer.contents() };
         let io = s.io_surface();
         let same = match (&current, io) {
-            (Some(c), Some(io)) => std::ptr::eq(Retained::as_ptr(c).cast::<u8>(), (io as *const objc2_io_surface::IOSurface).cast()),
+            (Some(c), Some(io)) => {
+                std::ptr::eq(Retained::as_ptr(c).cast::<u8>(), (io as *const objc2_io_surface::IOSurface).cast())
+            }
             _ => false,
         };
         if !same && let Some(io) = io {
@@ -612,14 +619,16 @@ pub fn to_screen(v: &Views, x: f64, y: f64) -> (f64, f64) {
 pub fn window_at(app: &App, sx: f64, sy: f64) -> Option<(u64, f64, f64)> {
     let ordered = NSApplication::sharedApplication(mtm()).orderedWindows();
     for nsw in ordered.iter() {
-        let Some((n, win)) = app.wins.iter().find(|(_, w)| Retained::as_ptr(&w.views.window) == Retained::as_ptr(&nsw)) else {
+        let Some((n, win)) = app.wins.iter().find(|(_, w)| Retained::as_ptr(&w.views.window) == Retained::as_ptr(&nsw))
+        else {
             continue;
         };
         if !nsw.isVisible() {
             continue;
         }
         let f = nsw.frame();
-        if !(sx >= f.origin.x && sx < f.origin.x + f.size.width && sy >= f.origin.y && sy < f.origin.y + f.size.height) {
+        if !(sx >= f.origin.x && sx < f.origin.x + f.size.width && sy >= f.origin.y && sy < f.origin.y + f.size.height)
+        {
             continue;
         }
         let p = nsw.convertPointFromScreen(NSPoint::new(sx, sy));
@@ -663,7 +672,12 @@ fn menu_item(title: &str, action: Sel, keys: &str, tag: isize) -> Retained<NSMen
     let mtm = mtm();
     let (k, flags) = key_equivalent(keys);
     let item = unsafe {
-        NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(mtm), &NSString::from_str(title), Some(action), &NSString::from_str(&k))
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str(title),
+            Some(action),
+            &NSString::from_str(&k),
+        )
     };
     item.setKeyEquivalentModifierMask(NSEventModifierFlags(flags as usize));
     item.setTag(tag);
@@ -741,7 +755,8 @@ pub fn rebuild_window_menu(app: &App) {
             }
             i -= 1;
         }
-        let hidden: Vec<&ctx_protocol::WindowInfo> = app.list.windows.iter().filter(|w| !app.wins.contains_key(&w.number)).collect();
+        let hidden: Vec<&ctx_protocol::WindowInfo> =
+            app.list.windows.iter().filter(|w| !app.wins.contains_key(&w.number)).collect();
         if !hidden.is_empty() {
             let sep = NSMenuItem::separatorItem(mtm);
             unsafe { sep.setRepresentedObject(Some(&NSString::from_str(WINDOW_ITEM))) };
@@ -1113,8 +1128,11 @@ fn dropped_files(w: u64, s: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
     let pb = s.draggingPasteboard();
     let classes = NSArray::from_slice(&[NSURL::class()]);
     let Some(items) = (unsafe { pb.readObjectsForClasses_options(&classes, None) }) else { return false };
-    let paths: Vec<String> =
-        items.iter().filter_map(|o| o.downcast::<NSURL>().ok()).filter_map(|u| u.path().map(|p| p.to_string())).collect();
+    let paths: Vec<String> = items
+        .iter()
+        .filter_map(|o| o.downcast::<NSURL>().ok())
+        .filter_map(|u| u.path().map(|p| p.to_string()))
+        .collect();
     if paths.is_empty() {
         return false;
     }
