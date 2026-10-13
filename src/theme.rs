@@ -55,7 +55,7 @@ pub fn basic_dark() -> Theme {
     }
 }
 
-/// Close to Ghostty's default look.
+/// Ghostty's default look (its palette, foreground and background): CTX's default theme.
 pub fn ghostty() -> Theme {
     Theme {
         name: "ghostty".into(),
@@ -80,12 +80,29 @@ pub fn ghostty() -> Theme {
         foreground: [255, 255, 255],
         background: [40, 44, 52],
         cursor: [255, 255, 255],
-        selection: [80, 90, 110],
+        selection: [62, 68, 81],
         dark: true,
     }
 }
 
-pub const BUILT_IN: &[&str] = &["system", "basic", "basic-dark", "ghostty"];
+/// Ghostty's palette on other backgrounds, distinct enough to tell tabs (and projects) apart at
+/// a glance: name, background, selection.
+const TINTS: &[(&str, [u8; 3], [u8; 3])] = &[
+    ("midnight", [27, 35, 52], [52, 66, 96]),
+    ("forest", [28, 40, 33], [52, 74, 60]),
+    ("plum", [44, 31, 48], [80, 58, 88]),
+    ("ember", [48, 33, 28], [88, 62, 52]),
+    ("ocean", [20, 42, 50], [40, 76, 90]),
+    ("graphite", [30, 30, 30], [70, 70, 74]),
+];
+
+fn tinted(name: &str) -> Option<Theme> {
+    let (n, bg, sel) = TINTS.iter().find(|(n, ..)| *n == name)?;
+    Some(Theme { name: n.to_string(), background: *bg, selection: *sel, ..ghostty() })
+}
+
+pub const BUILT_IN: &[&str] =
+    &["system", "ghostty", "midnight", "forest", "plum", "ember", "ocean", "graphite", "basic", "basic-dark"];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -150,6 +167,7 @@ pub fn load(name: &str, themes_dir: &Path, system_dark: bool) -> Result<Theme, S
         "basic" => Ok(basic_light()),
         "basic-dark" => Ok(basic_dark()),
         "ghostty" => Ok(ghostty()),
+        other if tinted(other).is_some() => Ok(tinted(other).unwrap()),
         other => {
             let path = themes_dir.join(format!("{other}.toml"));
             let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;

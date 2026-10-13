@@ -27,8 +27,10 @@ pub struct Press {
 pub enum Input {
     /// A named key for the server to encode.
     Key { key: String, text: Option<String> },
-    /// Let macOS text input handle it (it calls back with text, or marked text while composing).
+    /// Let text input handle it (it calls back with text, or marked text while composing).
     TextInput,
+    /// The app used it (a text field, a menu, a dialog).
+    Handled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

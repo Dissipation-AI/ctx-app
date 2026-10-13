@@ -24,6 +24,8 @@ pub struct AppState {
     pub windows: BTreeMap<u64, WindowState>,
     /// Font size chosen for a tab with ⌘+ / ⌘-.
     pub font_sizes: BTreeMap<u64, f64>,
+    /// Theme chosen for a tab (its colours mark what it's for).
+    pub tab_themes: BTreeMap<u64, String>,
     /// Closed tabs already offered in the "Reopen N tabs from last time" bar.
     pub offered: Vec<u64>,
     /// The app has run before (first-run setup done).
@@ -52,6 +54,7 @@ impl AppState {
     pub fn prune(&mut self, windows: &[u64], tabs: &[u64]) {
         self.windows.retain(|w, _| windows.contains(w));
         self.font_sizes.retain(|t, _| tabs.contains(t));
+        self.tab_themes.retain(|t, _| tabs.contains(t));
         for w in self.windows.values_mut() {
             if let Some(n) = w.tiles.take() {
                 let mut node = Some(n);
@@ -92,6 +95,7 @@ mod tests {
         );
         s.windows.insert(7, WindowState::default());
         s.font_sizes.insert(2, 16.0);
+        s.tab_themes.insert(2, "forest".into());
         s.save(&file).unwrap();
         let mut back = AppState::load(&file);
         assert_eq!(back, s);
@@ -100,6 +104,7 @@ mod tests {
         assert_eq!(back.windows[&1].tiles, None, "one tab left: no tiles");
         assert_eq!(back.windows[&1].selected, None);
         assert!(back.font_sizes.is_empty());
+        assert!(back.tab_themes.is_empty());
         std::fs::remove_dir_all(dir).ok();
         assert_eq!(AppState::load(Path::new("/nonexistent/x.json")), AppState::default());
     }

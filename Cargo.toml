@@ -29,6 +29,14 @@ path = "src/lib.rs"
 # Every dependency is justified in SPEC.md § Stack.
 [dependencies]
 ctx-protocol = { path = "../ctx/ctx-protocol" }
+libc = "0.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.1.8"
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-app-kit = "0.3.2"
@@ -40,12 +48,17 @@ objc2-io-surface = "0.3.2"
 objc2-service-management = "0.3.2"
 block2 = "0.6.2"
 dispatch2 = "0.3.1"
-libc = "0.2"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
-toml = "1.1.8"
-unicode-segmentation = "1.13.3"
-unicode-width = "0.2.2"
+
+# Linux: a window, a CPU buffer for it, fonts and glyphs, shapes, the clipboard, PNGs. Pure Rust
+# apart from what the window system needs; no GUI toolkit.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+winit = { version = "0.30.12", default-features = false, features = ["x11", "rwh_06"] }
+softbuffer = { version = "0.4.8", default-features = false, features = ["x11"] }
+swash = "0.2.10"
+fontdb = { version = "0.24.0", default-features = false, features = ["fs", "memmap", "fontconfig"] }
+tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "simd"] }
+arboard = { version = "3.6.1", default-features = false }
+png = "0.18.1"
 
 [profile.release]
 opt-level = 3
