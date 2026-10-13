@@ -93,7 +93,11 @@ impl Library {
 
     /// A face with `c`, preferring colour emoji for emoji-presentation characters.
     fn fallback_for(&mut self, c: char) -> Option<Face> {
-        let emoji = emoji_presentation(c);
+        self.fallback_kind(c, emoji_presentation(c))
+    }
+
+    /// A face with `c`: a colour emoji font when `emoji`.
+    fn fallback_kind(&mut self, c: char, emoji: bool) -> Option<Face> {
         if let Some(f) = self.fallback.get(&(c, emoji)) {
             return f.clone();
         }
@@ -346,14 +350,16 @@ impl Fonts {
         let first = chars.next().unwrap_or(' ');
         let single = chars.next().is_none();
         let base = self.face(variant as usize);
-        if single && !emoji_presentation(first) {
+        // An emoji variation selector asks for the emoji form.
+        let emoji = emoji_presentation(first) || g.contains('\u{fe0f}');
+        if single && !emoji {
             let gid = base.font().map(|f| f.charmap().map(first)).unwrap_or(0);
             if gid != 0 {
                 return Plan::Glyph { face: variant as usize, gid };
             }
         }
         // Another font: the emoji font, or one with this symbol.
-        let Some(fb) = with_library(|lib| lib.fallback_for(first)) else { return Plan::Blank };
+        let Some(fb) = with_library(|lib| lib.fallback_kind(first, emoji)) else { return Plan::Blank };
         let fi = self.face_index(fb.clone());
         if single {
             let gid = fb.font().map(|f| f.charmap().map(first)).unwrap_or(0);

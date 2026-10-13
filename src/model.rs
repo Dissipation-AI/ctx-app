@@ -324,7 +324,7 @@ mod tests {
                 .iter()
                 .map(|(r, t)| RowUpdate {
                     row: *r,
-                    runs: vec![StyledRun { text: t.to_string(), style: Default::default() }],
+                    runs: vec![StyledRun { text: t.to_string(), ..Default::default() }],
                     event: false,
                     wraps: false,
                 })
@@ -353,7 +353,7 @@ mod tests {
             lines: lines
                 .iter()
                 .map(|t| HistoryLine {
-                    runs: vec![StyledRun { text: t.to_string(), style: Default::default() }],
+                    runs: vec![StyledRun { text: t.to_string(), ..Default::default() }],
                     event: false,
                 })
                 .collect(),

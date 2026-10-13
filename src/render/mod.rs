@@ -519,8 +519,8 @@ mod tests {
         let red = CellStyle { background: Some([255, 0, 0]), ..Default::default() };
         let row = Row {
             runs: vec![
-                StyledRun { text: "AB".into(), style: red },
-                StyledRun { text: "  x".into(), style: CellStyle::default() },
+                StyledRun { text: "AB".into(), style: red, cells: Vec::new() },
+                StyledRun { text: "  x".into(), ..Default::default() },
             ],
             wraps: false,
             event: false,

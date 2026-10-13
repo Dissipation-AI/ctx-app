@@ -230,9 +230,9 @@ mod tests {
         let wide = CellStyle { flags: crate::text::WIDE, ..Default::default() };
         let r = Row {
             runs: vec![
-                StyledRun { text: "a".into(), style: CellStyle::default() },
-                StyledRun { text: "日本".into(), style: wide },
-                StyledRun { text: "b".into(), style: CellStyle::default() },
+                StyledRun { text: "a".into(), ..Default::default() },
+                StyledRun { text: "日本".into(), style: wide, cells: Vec::new() },
+                StyledRun { text: "b".into(), ..Default::default() },
             ],
             wraps: false,
             event: false,

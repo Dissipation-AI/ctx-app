@@ -471,8 +471,11 @@ pub fn connect() {
                 app.client = Some(client);
                 app.events = Some(events);
                 app.reconnecting = false;
-                // A new server (or a restarted one) knows nothing of our sizes and colours.
+                // A new server (or a restarted one) knows nothing of our sizes and colours, and
+                // may have other windows: start over as at launch (show what exists, open a
+                // window if there's none, offer to reopen interrupted tabs).
                 app.subscribed.clear();
+                app.first_list = true;
                 for v in app.views.values_mut() {
                     v.asked_size = None;
                     v.look = None;
