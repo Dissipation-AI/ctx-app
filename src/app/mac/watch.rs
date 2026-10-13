@@ -44,7 +44,7 @@ extern "C" fn changed(
     _flags: *const u32,
     _ids: *const u64,
 ) {
-    super::later(|a| a.reload_config());
+    super::super::later(|a| a.reload_config());
 }
 
 pub struct Watcher {

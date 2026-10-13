@@ -1,6 +1,8 @@
-//! Rows of styled runs, split into cells. The server sends runs of `(text, style)`; each grapheme
-//! is one cell, or two when the server flags it wide (scrollback lines have no flag, so their
-//! width comes from Unicode tables, as the emulator's does).
+//! Rows of styled runs, split into cells. The server sends runs of `(text, style)` with the
+//! terminal's own grid: where each cell's text starts and how wide it is (plain ASCII runs leave
+//! that out: one character per cell). Text is placed by that grid, never by guessing widths, so
+//! it lines up exactly as the emulator laid it out. Only text the app makes itself (input-method
+//! text, panels) is measured with Unicode tables.
 
 use ctx_protocol::{CellStyle, StyledRun};
 use unicode_segmentation::UnicodeSegmentation;
@@ -16,6 +18,8 @@ pub struct Row {
     pub wraps: bool,
     /// An event line drawn by ctx.
     pub event: bool,
+    /// Hyperlinks a program made (OSC 8): column spans and what they open.
+    pub links: Vec<ctx_protocol::LinkSpan>,
 }
 
 /// One grapheme placed on the grid.
@@ -39,9 +43,10 @@ pub fn grapheme_width(g: &str) -> usize {
 impl Row {
     pub fn plain(text: &str) -> Row {
         Row {
-            runs: vec![StyledRun { text: text.to_string(), style: CellStyle::default() }],
+            runs: vec![StyledRun { text: text.to_string(), ..Default::default() }],
             wraps: false,
             event: false,
+            links: Vec::new(),
         }
     }
 
@@ -52,6 +57,27 @@ impl Row {
         let mut col = 0usize;
         for run in &self.runs {
             let flagged_wide = run.style.flags & WIDE != 0;
+            // The terminal's grid, as sent.
+            if !run.cells.is_empty() {
+                for (i, c) in run.cells.iter().enumerate() {
+                    let a = c[0] as usize;
+                    let b = run.cells.get(i + 1).map(|n| n[0] as usize).unwrap_or(run.text.len());
+                    let text = run.text.get(a..b).unwrap_or("");
+                    let width = (c[1] as usize).max(1);
+                    out.push(Cell { column: col, text, width, style: run.style });
+                    col += width;
+                }
+                continue;
+            }
+            // Plain ASCII: one character per cell.
+            if run.text.is_ascii() {
+                let width = if flagged_wide { 2 } else { 1 };
+                for i in 0..run.text.len() {
+                    out.push(Cell { column: col, text: &run.text[i..i + 1], width, style: run.style });
+                    col += width;
+                }
+                continue;
+            }
             for g in run.text.graphemes(true) {
                 let width = if measured {
                     grapheme_width(g)
@@ -95,27 +121,41 @@ impl Row {
         self.runs.iter().map(|r| r.text.as_str()).collect()
     }
 
-    /// Split a logical line into rows of at most `columns` columns (wide graphemes never split).
+    /// Split a logical line into rows of at most `columns` columns (wide cells never split). The
+    /// rows keep the line's cells.
     pub fn wrap(&self, columns: usize) -> Vec<Row> {
         let columns = columns.max(2);
-        let mut rows: Vec<Row> = vec![Row { runs: Vec::new(), wraps: false, event: self.event }];
+        let mut rows: Vec<Row> = vec![Row { runs: Vec::new(), wraps: false, event: self.event, links: Vec::new() }];
         let mut col = 0usize;
-        for run in &self.runs {
-            for g in run.text.graphemes(true) {
-                let w = grapheme_width(g);
-                if col + w > columns {
-                    if let Some(last) = rows.last_mut() {
-                        last.wraps = true;
-                    }
-                    rows.push(Row { runs: Vec::new(), wraps: false, event: self.event });
-                    col = 0;
+        for c in self.cells(true) {
+            if col + c.width > columns {
+                if let Some(last) = rows.last_mut() {
+                    last.wraps = true;
                 }
-                let row = rows.last_mut().unwrap();
-                match row.runs.last_mut() {
-                    Some(r) if r.style == run.style => r.text.push_str(g),
-                    _ => row.runs.push(StyledRun { text: g.to_string(), style: run.style }),
+                rows.push(Row { runs: Vec::new(), wraps: false, event: self.event, links: Vec::new() });
+                col = 0;
+            }
+            let row = rows.last_mut().unwrap();
+            match row.runs.last_mut() {
+                Some(r) if r.style == c.style => {
+                    let at = r.text.len() as u16;
+                    r.text.push_str(c.text);
+                    r.cells.push([at, c.width as u16]);
                 }
-                col += w;
+                _ => row.runs.push(StyledRun {
+                    text: c.text.to_string(),
+                    style: c.style,
+                    cells: vec![[0, c.width as u16]],
+                }),
+            }
+            col += c.width;
+        }
+        for row in &mut rows {
+            for r in &mut row.runs {
+                let w = if r.style.flags & WIDE != 0 { 2 } else { 1 };
+                if r.text.is_ascii() && r.cells.len() == r.text.len() && r.cells.iter().all(|c| c[1] == w) {
+                    r.cells.clear();
+                }
             }
         }
         rows
@@ -126,15 +166,12 @@ impl Row {
         let columns = columns.max(2);
         let mut rows = 1usize;
         let mut col = 0usize;
-        for run in &self.runs {
-            for g in run.text.graphemes(true) {
-                let w = grapheme_width(g);
-                if col + w > columns {
-                    rows += 1;
-                    col = 0;
-                }
-                col += w;
+        for c in self.cells(true) {
+            if col + c.width > columns {
+                rows += 1;
+                col = 0;
             }
+            col += c.width;
         }
         rows
     }
@@ -144,13 +181,52 @@ impl Row {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_terminals_grid_wins_over_unicode_tables() {
+        // The server says "✔️" is one cell of width 1 here (say, mode 2027 off): trust it.
+        let r = Row {
+            runs: vec![StyledRun { text: "✔️x".into(), style: CellStyle::default(), cells: vec![[0, 1], [6, 1]] }],
+            wraps: false,
+            event: false,
+            links: Vec::new(),
+        };
+        let cells = r.cells(true);
+        assert_eq!(
+            cells.iter().map(|c| (c.column, c.text, c.width)).collect::<Vec<_>>(),
+            vec![(0, "✔️", 1), (1, "x", 1)]
+        );
+        // Without the grid the same text would be measured as two columns for the emoji.
+        let guessed = Row::plain("✔️x");
+        assert_eq!(guessed.cells(true)[1].column, 2);
+        // Wrapping keeps the grid.
+        let long = Row {
+            runs: vec![StyledRun {
+                text: "中中中".into(),
+                style: CellStyle::default(),
+                cells: vec![[0, 2], [3, 2], [6, 2]],
+            }],
+            wraps: false,
+            event: false,
+            links: Vec::new(),
+        };
+        let rows = long.wrap(5);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].runs[0].cells, vec![[0, 2], [3, 2]]);
+        assert_eq!(rows[1].cells(true)[0].width, 2);
+    }
+
     fn styled(text: &str, flags: u16) -> StyledRun {
-        StyledRun { text: text.into(), style: CellStyle { flags, ..Default::default() } }
+        StyledRun { text: text.into(), style: CellStyle { flags, ..Default::default() }, cells: Vec::new() }
     }
 
     #[test]
     fn wide_flag_places_cells() {
-        let r = Row { runs: vec![styled("a", 0), styled("日本", WIDE), styled("b", 0)], wraps: false, event: false };
+        let r = Row {
+            runs: vec![styled("a", 0), styled("日本", WIDE), styled("b", 0)],
+            wraps: false,
+            event: false,
+            links: Vec::new(),
+        };
         let cols: Vec<usize> = r.cells(false).iter().map(|c| c.column).collect();
         assert_eq!(cols, [0, 1, 3, 5]);
         assert_eq!(r.width(false), 6);

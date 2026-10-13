@@ -35,6 +35,16 @@ pub struct Client {
     next_id: u64,
 }
 
+/// Where the server's socket lives: the same folder the server picks (see ctx's `sys.rs`).
+#[cfg(not(target_os = "macos"))]
+pub fn user_temp_dir() -> PathBuf {
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(d) if !d.is_empty() => PathBuf::from(d),
+        _ => std::env::temp_dir(),
+    }
+}
+
+#[cfg(target_os = "macos")]
 pub fn user_temp_dir() -> PathBuf {
     let mut buf = vec![0u8; 1024];
     // SAFETY: buf is valid for its length; confstr writes at most that many bytes.

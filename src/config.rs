@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 pub struct AppConfig {
     pub font: String,
     pub font_size: f64,
-    /// `system` (follows macOS light/dark), a built-in theme, or a theme file name.
+    /// The default theme for tabs: a built-in (`ghostty`, the default), `system` (Terminal.app's
+    /// Basic, following macOS light/dark) or a theme file name. Each tab can choose its own.
     pub theme: String,
     pub left_option_is_meta: bool,
     pub right_option_is_meta: bool,
@@ -17,6 +18,9 @@ pub struct AppConfig {
     /// `block`, `bar` or `underline`.
     pub cursor: String,
     pub cursor_blink: bool,
+    /// macOS: tabs share the title bar with the window's buttons (off: a normal title bar, the
+    /// tabs under it).
+    pub tabs_in_titlebar: bool,
     /// Shortcut overrides: action name → keys, e.g. `new_tab = "cmd-t"`.
     pub keys: BTreeMap<String, String>,
 }
@@ -26,12 +30,13 @@ impl Default for AppConfig {
         AppConfig {
             font: "SF Mono".into(),
             font_size: 13.0,
-            theme: "system".into(),
+            theme: "ghostty".into(),
             left_option_is_meta: true,
             right_option_is_meta: false,
             confirm_multiline_paste: true,
             cursor: "block".into(),
             cursor_blink: false,
+            tabs_in_titlebar: true,
             keys: BTreeMap::new(),
         }
     }
@@ -112,12 +117,14 @@ pub fn load(path: &std::path::Path) -> Loaded {
 pub const EXAMPLE: &str = r#"[app]
 font = "SF Mono"
 font_size = 13
-theme = "system"            # follows macOS light/dark; or basic, basic-dark, ghostty, or a theme file name
+theme = "ghostty"           # ghostty, midnight, forest, plum, ember, ocean, graphite, basic, basic-dark,
+                            # system (Basic, following macOS light/dark), or a theme file name
 left_option_is_meta = true
 right_option_is_meta = false
 confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
+tabs_in_titlebar = true     # macOS: tabs share the title bar with the window's buttons
 
 # [app.keys]
 # new_tab = "cmd-t"

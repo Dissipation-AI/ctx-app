@@ -82,7 +82,7 @@ pub fn render(tab: u64, out: &std::path::Path, columns: u16, rows: u16, theme_na
         marked: None,
         scrolled: None,
     };
-    render::draw(&mut surface, &[tile], &Damage::All, theme.background);
+    render::draw(&mut surface, (0.0, 0.0, w, h), &[tile], &Damage::All, theme.background);
     surface.write_png(out)
 }
 
@@ -117,7 +117,12 @@ fn icon(px: usize, path: &std::path::Path) -> Result<(), String> {
     let mut fonts = FontCache::default();
     let f = fonts.get("SF Mono", 22.0, scale);
     let green = CellStyle { foreground: Some([80, 220, 120]), flags: 1, ..Default::default() };
-    let row = Row { runs: vec![StyledRun { text: ">_".into(), style: green }], wraps: false, event: false };
+    let row = Row {
+        runs: vec![StyledRun { text: ">_".into(), style: green, cells: Vec::new() }],
+        wraps: false,
+        event: false,
+        links: Vec::new(),
+    };
     let margin = (6.0 * scale).round();
     let tile = TileFrame {
         x: margin,
@@ -137,7 +142,7 @@ fn icon(px: usize, path: &std::path::Path) -> Result<(), String> {
         scrolled: None,
     };
     // Transparent corners: start clear, then the dark tile.
-    render::draw(&mut s, &[tile], &Damage::All, [0, 0, 0]);
+    render::draw(&mut s, (0.0, 0.0, px as f64, px as f64), &[tile], &Damage::All, [0, 0, 0]);
     s.clear_outside_rounded(margin, (12.0 * scale).round());
     s.write_png(path)
 }

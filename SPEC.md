@@ -5,6 +5,10 @@ shortcuts. It holds **no shells and no scrollback of its own**. It is a viewer a
 `ctx` server (see [../ctx/SPEC.md](../ctx/SPEC.md)). Anything you can do in the app, an agent can do
 with the `ctx` CLI, and the app reflects it immediately.
 
+It also builds and runs on Linux (X11). That build exists so the whole app can be run, inspected,
+screenshotted and driven with synthetic input on a machine without macOS; it draws the same
+pixels from the same code, and only the window, input and font plumbing differ (see Stack).
+
 ## Goals
 
 1. **Low memory:** < 80 MB with 3 windows and 15 tabs. Hidden tabs cost ~nothing.
@@ -27,6 +31,23 @@ with the `ctx` CLI, and the app reflects it immediately.
   listed in the Window menu, and `ctx show "<tab>"` brings one forward. Closing an app window closes
   the `ctx` window (with the usual "processes are running" confirmation). The app does nothing for
   a window nobody can see (covered, minimised, on another Space).
+- **The tab bar is the title bar** (`tabs_in_titlebar = true`, the default): tabs sit next to the
+  traffic lights, notebook style, rounded on top, with the selected tab flowing into the terminal
+  below it. Each tab has two lines: its label in a large, uniform font on top, its folder smaller
+  and dimmer underneath, and a status dot (idle, busy, agent working, agent waiting for you; agents
+  are recognised by program name: claude, codex, gemini, aider, …). When tabs don't fit, the bar
+  scrolls, with chevrons at the ends. At the right end are buttons for **+**, **History** and
+  **Activity**. All of it is drawn in the window's own pixel buffer: no native controls.
+- **+ (new tab) menu:** besides a plain new tab, it offers *starters* the server works out from
+  history: the first commands people ran in tabs, with their folder ("+ jupyter lab in
+  ~/code/nb", "+ npm run dev in ~/code/site"). Choosing one opens a tab in that folder with the
+  command typed at the prompt but **not run**.
+- **Per-tab themes:** a tab's context menu has a theme picker with swatches. The tinted built-in
+  themes (`midnight`, `forest`, `plum`, `ember`, `ocean`, `graphite`) have backgrounds that are
+  easy to tell apart, and the tab carries its colour in the bar.
+- **Overview** (⌘⇧O): every window, its tabs and each tab's processes as a horizontal tree
+  (window → tab → process), with each tab's status and agent. Drag a tab to another window in the
+  tree to move it.
 - A tab bar like Terminal.app/Ghostty. Drag to reorder, drag to another window to move, drag out
   to make a new window. All of these are `ctx` operations (`move tab …`, including
   `ctx move "<tab>" to new window`), so the CLI stays in sync.
@@ -67,8 +88,11 @@ The memory goes to window pixel buffers, not text. A window's on-screen image is
 pixels whatever it shows (a 1700×1050 pt window on a Retina display is ~28 MB per buffer), and
 on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the main lever.
 
-- **Toolkit:** AppKit via `objc2` bindings (native windows, tab bar, menus, text input). No
-  Electron, no web view, no cross-platform GUI toolkit.
+- **Toolkit:** AppKit via `objc2` bindings for windows, the menu bar, text input and alerts. No
+  Electron, no web view. Everything inside a window (tab bar, find and paste strips, panels,
+  context menus) is drawn as rectangles and text into the window's one pixel buffer, so it costs no
+  extra buffers and looks the same on both platforms. On Linux the window comes from `winit`, the
+  buffer is presented with `softbuffer`, and dialogs are drawn too.
 - **One text surface per window, whatever the tab count.** Switching tabs doesn't swap in a
   different view. The window's single surface just starts drawing another tab's text. The app
   asks the server for that tab's visible rows (a few KB), drops the previous tab's rows, and
@@ -89,12 +113,18 @@ on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the ma
     blink uses a timer that redraws just the cursor's row, and only runs while needed.
   - When a window is minimised, fully covered or on another Space, its surface is released
     (`NSWindow.occlusionState`) and its tabs are unsubscribed.
+  - Colours are sRGB: the surface is tagged sRGB, so a theme's hex values appear exactly as
+    written (as in Ghostty), at no memory cost.
   - Colours: full truecolor plus the 256/16-colour palettes, bold/italic/underline/strikethrough,
     reverse video, dim. Each cell is drawn from the server's `(text, style)` runs.
   - **Box drawing (U+2500–257F) and block elements (U+2580–259F)** are drawn as shapes filling the
     cell, so lines join across rows whatever the font's line height (light, heavy, double, dashed,
     rounded corners, diagonals, eighths, shades, quadrants).
-- **Glyphs:** shaped and rasterised with Core Text, so text looks like Terminal.app (SF Mono
+- **The grid is the emulator's.** The server sends each run with the terminal's cells (where each
+  cell's text starts and its width, from ghostty-vt); the app places text by that grid and never
+  guesses widths, so wide characters, emoji and combining marks land where the emulator put them.
+- **Glyphs:** shaped and rasterised with Core Text (on Linux: `swash`, fonts found with
+  `fontdb`/fontconfig, a bounded glyph cache), so text looks like Terminal.app (SF Mono
   default, emoji via Apple Color Emoji, fallback fonts for symbols and CJK, shaped clusters for
   emoji sequences and combining marks). Text-style symbols (✔ ☐ ★) take the text colour; only
   emoji-presentation characters use the emoji font. Glyph lookups are cached per font set
@@ -109,8 +139,8 @@ on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the ma
 - Keys are forwarded as key events to the server, which encodes them (xterm or kitty keyboard
   protocol, whichever the program asked for). The app doesn't encode escape sequences itself.
 - Option-as-Meta: configurable per side (`left_option_is_meta = true` default), like Terminal.app.
-- Mouse: selection, word/line selection, ⌘-click opens links (URLs found in the text; OSC 8 is
-  later), and mouse reporting to programs that request it (hold ⌥ to select anyway). The app sends
+- Mouse: selection, word/line selection, ⌘-click opens links (OSC 8 hyperlinks from programs, and URLs
+  found in the text), and mouse reporting to programs that request it (hold ⌥ to select anyway). The app sends
   mouse events; the server encodes them for the program.
 - Dropping files on a tab types their paths, shell-quoted (as Terminal.app does).
 - Paste goes through the server's bracketed paste. Pasting more than one line into a shell prompt
@@ -138,12 +168,14 @@ on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the ma
 | ⌘⌥← → ↑ ↓ | Move focus between side-by-side tiles |
 | ⌘⇧I | Rename tab |
 | ⌘⇧A | Activity panel |
+| ⌘⇧O | Overview of windows, tabs and processes |
 | ⌘, | Open the config file |
 | ⌃⌘F | Full screen |
 | ⌘M, ⌘H, ⌘` | Minimise, hide, cycle windows (standard macOS) |
 
 All shortcuts are listed in the menus (so they're discoverable) and can be rebound in config
-(`[app.keys]`). If a terminal program needs a key the app would take, ⌥-less ⌃ combinations
+(`[app.keys]`). On Linux, ⌘ is Ctrl+Shift and ⌘⇧ is Ctrl+Shift+Alt, so every plain Ctrl key
+still reaches the program. If a terminal program needs a key the app would take, ⌥-less ⌃ combinations
 always go to the program, as in Terminal.app.
 
 ## Agent visibility
@@ -177,16 +209,18 @@ always go to the program, as in Terminal.app.
 [app]
 font = "SF Mono"
 font_size = 13
-theme = "system"            # follows macOS light/dark; or a theme file name
+theme = "ghostty"           # Ghostty's default colours; "system" follows macOS light/dark
 left_option_is_meta = true
 right_option_is_meta = false
 confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
+tabs_in_titlebar = true     # false: a plain title bar with the tabs below it
 ```
 
-Themes: Terminal.app's "Basic" look by default (`system` picks Basic or Basic dark with macOS);
-built in: `basic`, `basic-dark`, `ghostty`. Theme files live in `~/.config/ctx/themes/<name>.toml`:
+Themes: Ghostty's default colours by default. Built in: `ghostty`, `system` (Terminal.app's Basic
+or Basic dark, following macOS), `basic`, `basic-dark`, and the tinted `midnight`, `forest`,
+`plum`, `ember`, `ocean`, `graphite`. A window's theme can be overridden per tab. Theme files live in `~/.config/ctx/themes/<name>.toml`:
 
 ```toml
 palette = ["#000000", "#990000", …]   # 16 ANSI colours
@@ -208,12 +242,15 @@ remove one); a rebinding takes the key away from the action that had it. The ser
 | Language | Rust, edition 2024, pinned stable toolchain | |
 | macOS UI | `objc2` + `objc2-app-kit`, `objc2-foundation`, `objc2-quartz-core`, `objc2-core-text`, `objc2-core-graphics`, `objc2-io-surface`, `objc2-service-management`, `block2`, `dispatch2` | native AppKit, typed bindings, no Xcode project |
 | Rendering | Core Text on the CPU into one IOSurface per window | measured: one buffer per window (see Rendering) |
+| Linux (dev and test) | `winit` (X11), `softbuffer`, `swash`, `fontdb`, `tiny-skia`, `arboard` | the same app core and drawing, a software canvas |
 | Text | `unicode-segmentation`, `unicode-width` | graphemes and cell widths for scrollback lines |
 | Server connection | `ctx-protocol` crate (the one cross-project dependency) | protocol versions checked on connect |
 | Config | `toml` + `serde`, `serde_json` for the state file, file watching via `FSEvents` FFI | |
 | Bundling | small `xtask` that builds the `.app`, signs (Developer ID, hardened runtime) and notarizes | reproducible in CI |
 
-No cross-platform GUI toolkit, no web view, no async runtime.
+No cross-platform GUI toolkit, no web view, no async runtime. The app core (`src/app/*.rs`)
+draws through a small `Canvas` trait and talks to the platform through `src/app/mac` or
+`src/app/linux`.
 
 ## Testing
 
@@ -244,20 +281,32 @@ No cross-platform GUI toolkit, no web view, no async runtime.
   scrollback.
 - `scripts/budgets.sh`: the memory budget workload.
 
+All of these also run on Linux under Xvfb (`CTX_APP_SELFTEST=1` runs the same self-test there).
+`scripts/dev-linux.sh` starts a virtual display, a throwaway server and the app, to be driven with
+`xdotool` and screenshotted; `CTX_APP_INSPECT=<file>` writes the app's state (windows, tabs, focus,
+hit areas) as JSON after each draw, and `CTX_APP_DUMP=<folder>` saves each window's pixels.
+
 ## Crate layout
 
 ```
 ctx-app/
-  src/app/        AppKit: app delegate, windows, terminal view, tab bar, menus, panels,
-                  first-run install, config watching, self-test
-  src/render.rs   Core Text drawing into IOSurfaces (and PNGs); src/boxes.rs box drawing
+  src/app/        the app core: windows and tabs, drawing, input, actions, the drawn chrome
+                  (chrome.rs: tab bar and strips; panels.rs; ui.rs: menus, fields, dialogs),
+                  self-test
+  src/app/mac/    AppKit: windows, content view and text input, menus, alerts, first-run
+                  install, config watching
+  src/app/linux/  winit + softbuffer: the same, for Linux
+  src/render/     the Canvas trait and terminal drawing (mod.rs); cg.rs Core Text into
+                  IOSurfaces; soft.rs the software canvas; src/boxes.rs box drawing
   src/model.rs    a tab's screen, scrollback cache and scroll position
   src/selection.rs, src/layout.rs (tiles), src/keys.rs, src/shortcuts.rs, src/links.rs
   src/client.rs   connection to the ctx server (ctx-protocol)
   src/headless.rs drawing a tab to a PNG without a window (`CTX --render`)
   bundle/         Info.plist, entitlements, LaunchAgent plist
   xtask/          `cargo xtask bundle`: builds, signs and notarizes CTX.app
-  tests/          self-test, reference screens, crash test
+  scripts/        install-mac.sh (build, uninstall the old app, reset TCC, install),
+                  dev-linux.sh, budgets.sh
+  tests/          self-test, reference screens (macos/ and linux/), crash test
 ```
 
 ## Protocol additions (ctx protocol version 2)
@@ -276,6 +325,15 @@ What the viewer needs from the model, added to `ctx-protocol` and the server:
 - `WindowRef::New`: `ctx move "<tab>" to new window`.
 - The app is always "you" to the server, whoever launched it; its input and colour requests are
   never held while a tab's shell starts, and opening a tab from the app answers at once.
+
+## Protocol version 3
+
+- Runs carry the terminal's cell grid (`StyledRun.cells`: byte offset and width per cell; left out
+  for plain one-cell ASCII). Scrollback lines are measured by the server with ghostty-vt's widths.
+- Screen updates carry OSC 8 hyperlinks (`RowUpdate.links`).
+- A cursor move alone is sent as an update (arrow keys move the cursor at once).
+- `Starters`: the first commands run in tabs, with folder, count and when last used.
+- `Processes`: a tab's process tree.
 
 ## Acceptance tests
 

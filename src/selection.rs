@@ -230,12 +230,13 @@ mod tests {
         let wide = CellStyle { flags: crate::text::WIDE, ..Default::default() };
         let r = Row {
             runs: vec![
-                StyledRun { text: "a".into(), style: CellStyle::default() },
-                StyledRun { text: "日本".into(), style: wide },
-                StyledRun { text: "b".into(), style: CellStyle::default() },
+                StyledRun { text: "a".into(), ..Default::default() },
+                StyledRun { text: "日本".into(), style: wide, cells: Vec::new() },
+                StyledRun { text: "b".into(), ..Default::default() },
             ],
             wraps: false,
             event: false,
+            links: Vec::new(),
         };
         let src = Rows(vec![r]);
         // Columns: a=0, 日=1-2, 本=3-4, b=5. Starting on the second half of 日 still takes it.
