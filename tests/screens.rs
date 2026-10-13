@@ -1,8 +1,9 @@
 //! Reference screens: fixed programs (colours, emoji and CJK, box drawing, an Ink-style redraw,
 //! vim) run in a throwaway ctx server, drawn by the app's renderer without a window, and compared
 //! with approved PNGs in `tests/reference/` (a tolerant diff, since font rasterisation changes a
-//! little between macOS versions). A missing reference is written and the test fails once, so a
-//! person looks at it before it's committed. `CTX_UPDATE_REFERENCES=1` rewrites them all.
+//! little between macOS versions). Each platform has its own references (`reference/macos`,
+//! `reference/linux`): its fonts differ. A missing reference is written and the test fails once,
+//! so a person looks at it before it's committed. `CTX_UPDATE_REFERENCES=1` rewrites them all.
 //!
 //! Needs the ctx binary (`../ctx/target/debug/ctx`, or `CTX_BIN`).
 
@@ -39,7 +40,7 @@ fn start() -> Server {
     std::fs::create_dir_all(&home).unwrap();
     // SAFETY: set before any other thread reads the environment (this test is one function).
     unsafe { std::env::set_var("CTX_HOME", &home) };
-    let child = Command::new(ctx_bin()).arg("server").spawn().expect("start ctx server");
+    let child = Command::new(ctx_bin()).arg("server").env("LANG", "C.UTF-8").spawn().expect("start ctx server");
     let sock = home.join("run/server.sock");
     let start = Instant::now();
     while !sock.exists() && start.elapsed() < Duration::from_secs(5) {
@@ -81,7 +82,9 @@ fn reference_screens() {
         std::thread::sleep(Duration::from_millis(800));
         let got = out_dir.join(format!("{name}.png"));
         ctx_app::headless::render(tab, &got, 0, 0, "basic").expect("render");
-        let want = dir.join(format!("reference/{name}.png"));
+        let platform = if cfg!(target_os = "macos") { "macos" } else { "linux" };
+        let want = dir.join(format!("reference/{platform}/{name}.png"));
+        std::fs::create_dir_all(want.parent().unwrap()).unwrap();
         if update || !want.exists() {
             std::fs::copy(&got, &want).unwrap();
             if !update {
