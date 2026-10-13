@@ -152,6 +152,7 @@ impl App {
             scale,
             focused_field: win.focus == Focus::Panel && win.key,
             agent_window,
+            processes: &self.processes,
         };
         Some(f(p, &ctx))
     }
@@ -312,6 +313,7 @@ impl App {
         let list = self.list.clone();
         let activity = self.activity.clone();
         let agent_window = self.agent_window();
+        let processes = self.processes.clone();
         let bgs: HashMap<u64, render::Rgb> =
             list.windows.iter().flat_map(|x| x.tabs.iter().map(|t| t.number)).collect::<Vec<_>>().into_iter().map(|t| (t, self.tab_theme(t).background)).collect();
         let default_bg = self.theme(None).background;
@@ -360,6 +362,7 @@ impl App {
                     scale,
                     focused_field: win.focus == Focus::Panel && key,
                     agent_window,
+                    processes: &processes,
                 };
                 panels::draw(c, p, items, &ctx, caret_on);
             }

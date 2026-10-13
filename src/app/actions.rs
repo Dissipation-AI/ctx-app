@@ -499,7 +499,8 @@ impl App {
                     }
                 });
             }
-            Kind::FindAll | Kind::Overview => {}
+            Kind::Overview => self.refresh_processes(),
+            Kind::FindAll => {}
         }
         self.update_subscriptions();
         self.redraw_dirty();
@@ -523,6 +524,24 @@ impl App {
             if win.panel.as_ref().is_some_and(|p| p.kind == kind) {
                 win.dirty = Some(Dirty::All);
             }
+        }
+    }
+
+    /// Ask what runs in every tab (the Overview shows it, and refreshes it while open).
+    pub fn refresh_processes(&mut self) {
+        self.processes_at = Some(Instant::now());
+        let tabs: Vec<u64> = self.list.windows.iter().flat_map(|w| w.tabs.iter().map(|t| t.number)).collect();
+        self.processes.retain(|t, _| tabs.contains(t));
+        for t in tabs {
+            self.request("", Request::Processes { tab: TabRef::Number(t) }, move |a, r| {
+                if let Response::Ok(Output::Processes(list)) = r
+                    && a.processes.get(&t) != Some(&list.processes)
+                {
+                    a.processes.insert(t, list.processes);
+                    a.panels_changed(Kind::Overview);
+                    a.redraw_dirty();
+                }
+            });
         }
     }
 
@@ -751,6 +770,12 @@ impl App {
             self.chrome_changed();
             self.touched.retain(|_, (at, _)| at.elapsed().as_secs() <= super::BADGE_SECONDS + 1);
         }
+        // The Overview keeps what runs in each tab current.
+        let overview = self.wins.values().any(|w| w.visible && w.panel.as_ref().is_some_and(|p| p.kind == Kind::Overview));
+        if overview && self.processes_at.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) {
+            self.refresh_processes();
+        }
+        let need = need || overview;
         // Agents' "working"/"waiting" follows their output.
         let agents = self.statuses.values().any(|s| matches!(s, Status::AgentWorking));
         if agents {

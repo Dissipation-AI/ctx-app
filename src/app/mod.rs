@@ -374,6 +374,9 @@ pub struct App {
     /// Starters for the + menu, and when they were worked out.
     pub starters: Vec<Starter>,
     pub starters_at: Option<Instant>,
+    /// What runs in each tab (for the Overview), and when it was last asked.
+    pub processes: HashMap<u64, Vec<ProcessInfo>>,
+    pub processes_at: Option<Instant>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -437,6 +440,8 @@ pub fn launched() {
         unread: HashMap::new(),
         starters: Vec::new(),
         starters_at: None,
+        processes: HashMap::new(),
+        processes_at: None,
     };
     APP.with(|a| *a.borrow_mut() = Some(app));
     with_app(|app| {

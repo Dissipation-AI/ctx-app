@@ -235,7 +235,16 @@ pub struct Ctx<'a> {
     pub scale: f64,
     pub focused_field: bool,
     pub agent_window: Option<u64>,
+    /// What runs in each tab (the Overview's third column).
+    pub processes: &'a HashMap<u64, Vec<ProcessInfo>>,
 }
+
+/// The rows a tab takes in the Overview: one per process under its shell (at least one).
+fn process_rows(ctx: &Ctx, tab: u64) -> usize {
+    ctx.processes.get(&tab).map(|v| v.iter().filter(|p| p.depth > 0).count()).unwrap_or(0).max(1)
+}
+
+const PROC_H: f64 = 30.0;
 
 fn fill(items: &mut Vec<Item>, r: Rect, c: Rgb, radius: f64) {
     items.push(Item { rect: r, op: Op::Fill { c, a: 1.0, radius }, hit: None });
@@ -485,8 +494,14 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
     let col = ctx.col;
     items.push(Item { rect: body, op: Op::Clip(Some(body)), hit: None });
     let words: Vec<String> = p.field.text.to_lowercase().split_whitespace().map(str::to_string).collect();
-    let (wx, tx, px_) = (body.x + 20.0, body.x + 230.0, body.x + 230.0 + 300.0 + 40.0);
-    let (ww, tw, pw) = (180.0, 300.0, (body.x + body.w - px_ - 20.0).clamp(160.0, 360.0));
+    // Three columns, sized to the window: windows, their tabs, what runs in each tab.
+    let avail = (body.w - 40.0).max(420.0);
+    let gap_x = (avail * 0.04).clamp(18.0, 40.0);
+    let ww = (avail * 0.2).clamp(110.0, 190.0);
+    let tw = (avail * 0.36).clamp(170.0, 320.0);
+    let pw = (avail - ww - tw - 2.0 * gap_x).clamp(130.0, 420.0);
+    let (wx, tx) = (body.x + 20.0, body.x + 20.0 + ww + gap_x);
+    let px_ = tx + tw + gap_x;
     let card_h = 46.0;
     let gap = 10.0;
     let mut y = body.y + 16.0 - p.scroll[0];
@@ -505,8 +520,8 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
         if tabs.is_empty() && !words.is_empty() {
             continue;
         }
-        let rows = tabs.len().max(1) as f64;
-        let group_h = rows * (card_h + gap) - gap;
+        let heights: Vec<f64> = tabs.iter().map(|t| (process_rows(ctx, t.number) as f64 * PROC_H).max(card_h)).collect();
+        let group_h = (heights.iter().map(|h| h + gap).sum::<f64>() - gap).max(card_h);
         // Window card, centred on its tabs.
         let wy = y + (group_h - card_h) / 2.0;
         let wr = Rect::new(wx, wy, ww, card_h);
@@ -523,7 +538,8 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
         text(items, Rect::new(wr.x + 12.0, wr.y + 25.0, ww - 24.0, 16.0), Font::Small, sub, col.dim);
         hit(items, wr, PanelHit::Window(w.number));
         let mut ty = y;
-        for t in &tabs {
+        for (ti, t) in tabs.iter().enumerate() {
+            let slot = heights[ti];
             // Elbow from the window card to the tab card.
             let (x0, y0) = (wr.x + ww, wr.y + card_h / 2.0);
             let (x1, y1) = (tx, ty + card_h / 2.0);
@@ -546,23 +562,66 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
                 Status::AgentWaiting => (col.waiting, "waiting for you"),
             };
             fill(items, Rect::new(tr.x + 12.0, tr.y + 10.0, 8.0, 8.0), dot, 4.0);
-            text(items, Rect::new(tr.x + 28.0, tr.y + 5.0, tw - 120.0, 18.0), Font::Bold, label, [235, 235, 235]);
-            text(items, Rect::new(tr.x + tw - 108.0, tr.y + 6.0, 98.0, 16.0), Font::Small, format!("tab {} · {state}", t.number), [190, 190, 190]);
+            let meta = format!("tab {} · {state}", t.number);
+            let mw = (ctx.fonts.small.measure(&meta) / ctx.scale + 4.0).min(tw * 0.5);
+            text(items, Rect::new(tr.x + 28.0, tr.y + 5.0, tw - mw - 40.0, 18.0), Font::Bold, label, [235, 235, 235]);
+            text(items, Rect::new(tr.x + tw - mw - 10.0, tr.y + 6.0, mw, 16.0), Font::Small, meta, [190, 190, 190]);
             text(items, Rect::new(tr.x + 28.0, tr.y + 25.0, tw - 40.0, 16.0), Font::Small, folder, [170, 170, 170]);
             hit(items, tr, PanelHit::Card(t.number));
-            // What runs in it.
-            if let Some(run) = &t.running {
+            // What runs in it: the processes under its shell, as a tree.
+            let procs: Vec<&ProcessInfo> = ctx.processes.get(&t.number).map(|v| v.iter().filter(|p| p.depth > 0).collect()).unwrap_or_default();
+            let status = ctx.statuses.get(&t.number).copied().unwrap_or(Status::Idle);
+            if procs.is_empty() {
+                if let Some(run) = &t.running {
+                    let (x0, y0) = (tr.x + tw, tr.y + card_h / 2.0);
+                    items.push(Item { rect: body, op: Op::Stroke { path: vec![PathOp::Move(x0, y0), PathOp::Line(px_, y0)], w: 1.2, c: line }, hit: None });
+                    let pr = Rect::new(px_, ty + 6.0, pw, PROC_H - 4.0);
+                    fill(items, pr, col.field, 7.0);
+                    text(items, Rect::new(pr.x + 10.0, pr.y + 5.0, pw - 20.0, 16.0), Font::Label, run.clone(), col.text);
+                    hit(items, pr, PanelHit::Card(t.number));
+                }
+            } else {
                 let (x0, y0) = (tr.x + tw, tr.y + card_h / 2.0);
-                items.push(Item { rect: body, op: Op::Stroke { path: vec![PathOp::Move(x0, y0), PathOp::Line(px_, y0)], w: 1.2, c: line }, hit: None });
-                let pr = Rect::new(px_, ty + 4.0, pw, card_h - 8.0);
-                fill(items, pr, col.field, 8.0);
-                let pid = t.pid.map(|p| format!("pid {p}")).unwrap_or_default();
-                let since = t.started.as_deref().map(ago).map(|a| format!(" · since {}", a.trim_end_matches(" ago"))).unwrap_or_default();
-                text(items, Rect::new(pr.x + 10.0, pr.y + 3.0, pw - 20.0, 18.0), Font::Label, run.clone(), col.text);
-                text(items, Rect::new(pr.x + 10.0, pr.y + 20.0, pw - 20.0, 16.0), Font::Small, format!("{pid}{since}"), col.dim);
-                hit(items, pr, PanelHit::Card(t.number));
+                let mut prev_y: Vec<f64> = Vec::new();
+                for (i, pr_) in procs.iter().enumerate() {
+                    let d = (pr_.depth - 1) as f64;
+                    let py = ty + i as f64 * PROC_H;
+                    let pr = Rect::new(px_ + d * 18.0, py + 2.0, (pw - d * 18.0).max(80.0), PROC_H - 4.0);
+                    let mid = pr.y + pr.h / 2.0;
+                    // From the tab card to top-level processes; from a parent to its children.
+                    let path = if d == 0.0 {
+                        let mx = (x0 + px_) / 2.0;
+                        vec![PathOp::Move(x0, y0), PathOp::Line(mx, y0), PathOp::Line(mx, mid), PathOp::Line(px_, mid)]
+                    } else {
+                        let up = prev_y.get(d as usize - 1).copied().unwrap_or(mid);
+                        let vx = pr.x - 9.0;
+                        vec![PathOp::Move(vx, up), PathOp::Line(vx, mid), PathOp::Line(pr.x, mid)]
+                    };
+                    items.push(Item { rect: body, op: Op::Stroke { path, w: 1.1, c: line }, hit: None });
+                    prev_y.truncate(d as usize);
+                    prev_y.push(pr.y + pr.h);
+                    let prog = super::program_of(&pr_.command);
+                    let agent = super::AGENTS.contains(&prog) || super::AGENTS.contains(&pr_.name.as_str());
+                    fill(items, pr, if agent { mix(col.agent, col.field, 0.82) } else { col.field }, 7.0);
+                    let nw = ctx.fonts.label_bold.measure(&pr_.name) / ctx.scale;
+                    text(items, Rect::new(pr.x + 10.0, pr.y + 5.0, pr.w - 70.0, 16.0), Font::Bold, pr_.name.clone(), col.text);
+                    let mut detail = pr_.command.clone();
+                    if agent {
+                        let st = match status {
+                            Status::AgentWorking => "working",
+                            Status::AgentWaiting => "waiting for you",
+                            _ => "",
+                        };
+                        if !st.is_empty() {
+                            detail = format!("{st} · {detail}");
+                        }
+                    }
+                    text(items, Rect::new(pr.x + 18.0 + nw, pr.y + 6.0, (pr.w - nw - 88.0).max(20.0), 16.0), Font::Small, detail, if agent { col.agent } else { col.dim });
+                    text(items, Rect::new(pr.x + pr.w - 64.0, pr.y + 6.0, 58.0, 16.0), Font::Small, format!("{}", pr_.pid), col.faint);
+                    hit(items, pr, PanelHit::Card(t.number));
+                }
             }
-            ty += card_h + gap;
+            ty += slot + gap;
         }
         y += group_h + 28.0;
     }
@@ -594,7 +653,9 @@ pub fn content_height(p: &Panel, ctx: &Ctx) -> [f64; 2] {
         Kind::History => p.visible_closed().len() as f64 * 44.0 + 40.0,
         Kind::Activity => ctx.activity.len() as f64 * 42.0 + 16.0,
         Kind::FindAll => p.found.as_ref().map(|f| f.hits.iter().map(|h| 32.0 + (h.before.len() + 1 + h.after.len()) as f64 * 17.0).sum()).unwrap_or(0.0) + 16.0,
-        Kind::Overview => ctx.list.windows.iter().map(|w| w.tabs.len().max(1) as f64 * 56.0 + 28.0).sum::<f64>() + 80.0,
+        Kind::Overview => {
+            ctx.list.windows.iter().map(|w| w.tabs.iter().map(|t| (process_rows(ctx, t.number) as f64 * PROC_H).max(46.0) + 10.0).sum::<f64>() + 28.0).sum::<f64>() + 80.0
+        }
     };
     let viewer = p.records.as_ref().map(|(_, r)| r.len() as f64 * ctx.mono.cell_h / ctx.scale + 40.0).unwrap_or(0.0);
     [main, viewer]
