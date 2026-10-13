@@ -5,7 +5,8 @@ set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 app=${1:-$here/target/debug/CTX}
 ctx=${CTX_BIN:-$here/../ctx/target/debug/ctx}
-export CTX_HOME=$(mktemp -d /tmp/ctx-app-selftest.XXXXXX)
+CTX_HOME=$(mktemp -d /tmp/ctx-app-selftest.XXXXXX)
+export CTX_HOME
 mkdir -p "$CTX_HOME/home"
 printf 'shell = "/bin/zsh"\n' > "$CTX_HOME/config.toml"
 pids=()
