@@ -385,6 +385,10 @@ impl App {
         {
             let _ = s.write_png(&std::path::Path::new(&dir).join(format!("window-{w}.png")));
         }
+        // CTX_APP_INSPECT=<file>: what the app thinks is on screen, as JSON, after each draw.
+        if let Some(path) = std::env::var_os("CTX_APP_INSPECT") {
+            let _ = std::fs::write(path, serde_json::to_vec_pretty(&self.inspect()).unwrap_or_default());
+        }
         if let Some((t, at)) = self.key_echo
             && rects.iter().any(|(x, _)| *x == t)
         {
@@ -397,6 +401,65 @@ impl App {
                 v.drawn = places;
             }
         }
+    }
+
+    /// The app's state as JSON, for tests and debugging (`CTX_APP_INSPECT`).
+    pub fn inspect(&self) -> serde_json::Value {
+        use serde_json::json;
+        let rect = |r: &Rect| json!([r.x, r.y, r.w, r.h]);
+        let wins: Vec<serde_json::Value> = self
+            .wins
+            .values()
+            .map(|w| {
+                json!({
+                    "window": w.number,
+                    "key": w.key,
+                    "visible": w.visible,
+                    "size": plat::content_size(&w.views),
+                    "scale": w.scale,
+                    "focus": format!("{:?}", w.focus),
+                    "selected": w.selected,
+                    "focused": w.focused,
+                    "tiles": w.tiles,
+                    "term": rect(&w.term_rect),
+                    "tile_rects": w.tile_rects.iter().map(|(t, r)| json!({"tab": t, "rect": rect(r)})).collect::<Vec<_>>(),
+                    "bar": {
+                        "tabs": w.bar.tabs.iter().map(|(t, r)| json!({"tab": t, "rect": rect(r)})).collect::<Vec<_>>(),
+                        "plus": rect(&w.bar.plus),
+                        "buttons": w.bar.buttons.iter().map(|(b, r)| json!({"button": format!("{b:?}"), "rect": rect(r)})).collect::<Vec<_>>(),
+                        "scroll": w.bar_scroll,
+                    },
+                    "hover": w.hover.map(|h| format!("{h:?}")),
+                    "panel": w.panel.as_ref().map(|p| json!({"kind": format!("{:?}", p.kind), "field": p.field.text, "selected": p.selected})),
+                    "menu": w.menu.as_ref().map(|m| m.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()),
+                    "dialog": w.dialog.as_ref().map(|d| d.title.clone()),
+                    "find": w.find.as_ref().map(|f| json!({"text": f.field.text, "status": f.status})),
+                    "reopen_offer": w.reopen_offer,
+                })
+            })
+            .collect();
+        let tabs: Vec<serde_json::Value> = self
+            .views
+            .iter()
+            .map(|(t, v)| {
+                json!({
+                    "tab": t,
+                    "grid": [v.screen.columns, v.screen.rows],
+                    "cursor": v.screen.cursor,
+                    "scrolled": v.pos != ViewPos::Live,
+                    "selection": v.selection.is_some(),
+                    "status": self.statuses.get(t).map(|s| format!("{s:?}")),
+                    "theme": self.state.tab_themes.get(t),
+                    "screen": v.screen.lines.iter().map(|r| r.text()).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        json!({
+            "windows": wins,
+            "tabs": tabs,
+            "starters": self.starters.iter().map(|s| json!({"folder": s.folder, "command": s.command, "count": s.count})).collect::<Vec<_>>(),
+            "connected": self.client.is_some(),
+        })
     }
 
     /// Hit-test window `w`'s chrome and strips (points in its content).

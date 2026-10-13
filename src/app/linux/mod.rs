@@ -274,8 +274,9 @@ pub struct Views {
 impl Drop for Views {
     fn drop(&mut self) {
         let id = self.window.id();
-        WINDOWS.with(|w| w.borrow_mut().remove(&id));
-        INPUT.with(|i| i.borrow_mut().remove(&id));
+        // At exit the thread's storage may already be gone.
+        let _ = WINDOWS.try_with(|w| w.borrow_mut().remove(&id));
+        let _ = INPUT.try_with(|i| i.borrow_mut().remove(&id));
     }
 }
 
