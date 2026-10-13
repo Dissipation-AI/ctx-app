@@ -455,16 +455,22 @@ pub fn launched() {
     });
 }
 
-/// Connect to the server (starting it if needed) and subscribe.
+/// Connect to the server (starting it if needed) and subscribe. Starting the server and
+/// waiting for it happens off the main thread, so windows keep drawing meanwhile.
 pub fn connect() {
-    let attempt = Client::connect(plat::wake);
-    let result = match attempt {
+    match Client::connect(plat::wake) {
         Err(ConnectError::NoServer(_)) => {
-            plat::install::start_server();
-            if crate::client::wait_for_server(Duration::from_secs(8)) { Client::connect(plat::wake) } else { attempt }
+            std::thread::spawn(|| {
+                plat::install::start_server();
+                crate::client::wait_for_server(Duration::from_secs(8));
+                plat::post_from_any_thread(Box::new(|| connected(Client::connect(plat::wake))));
+            });
         }
-        other => other,
-    };
+        other => connected(other),
+    }
+}
+
+fn connected(result: Result<(Client, Receiver<Event>), ConnectError>) {
     match result {
         Ok((client, events)) => {
             with_app(|app| {
@@ -1432,7 +1438,14 @@ impl App {
             });
             return;
         }
-        let Some(w) = self.key_window() else { return };
+        // No window to show it in yet (Linux, before the first window): say it on stderr and take
+        // the last answer (Cancel, Quit).
+        let Some(w) = self.key_window() else {
+            eprintln!("CTX: {title}: {text}");
+            let n = buttons.len();
+            then(self, (n >= 2).then(|| n - 1), String::new());
+            return;
+        };
         let Some(win) = self.wins.get_mut(&w) else { return };
         if win.dialog.is_some() {
             // One at a time: answer this one after the one showing.
