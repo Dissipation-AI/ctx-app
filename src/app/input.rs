@@ -737,6 +737,7 @@ impl App {
 
     /// A scroll event: trackpads give points (`precise`), wheels give lines. Positive `dy`
     /// scrolls up (towards older lines).
+    #[allow(clippy::too_many_arguments)]
     pub fn scroll_event(&mut self, w: u64, x: f64, y: f64, dx: f64, dy: f64, precise: bool, flags: u64) {
         let hit = self.chrome_hit(w, x, y);
         if y < chrome::BAR_H {
@@ -1251,7 +1252,7 @@ impl App {
 
     fn panel_scroll(&mut self, w: u64, x: f64, dy: f64) {
         let Some(area) = self.panel_area(w) else { return };
-        let heights = self.with_panel_ctx(w, |p, ctx| panels::content_height(p, ctx)).unwrap_or([0.0; 2]);
+        let heights = self.with_panel_ctx(w, panels::content_height).unwrap_or([0.0; 2]);
         if let Some(win) = self.wins.get_mut(&w)
             && let Some(p) = win.panel.as_mut()
         {

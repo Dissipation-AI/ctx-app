@@ -305,8 +305,7 @@ fn draw_tab<C: Canvas>(
     let h = r.y + r.h - top;
     let fill = if item.selected { Some(item.background) } else { unselected_fill(item, hover, col) };
     if let Some(f) = fill {
-        let bottom_r = if item.selected { 0.0 } else { 0.0 };
-        c.fill_rounded(f, 1.0, x, top, w, h, [rad, rad, bottom_r, bottom_r]);
+        c.fill_rounded(f, 1.0, x, top, w, h, [rad, rad, 0.0, 0.0]);
     }
     let under = fill.unwrap_or(col.bar);
     if item.selected {

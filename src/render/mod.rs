@@ -52,6 +52,7 @@ pub enum Trunc {
 pub trait Canvas {
     fn fill(&mut self, c: Rgb, alpha: f64, x: f64, y: f64, w: f64, h: f64);
     /// A rectangle with rounded corners: radii top-left, top-right, bottom-right, bottom-left.
+    #[allow(clippy::too_many_arguments)]
     fn fill_rounded(&mut self, c: Rgb, alpha: f64, x: f64, y: f64, w: f64, h: f64, radii: [f64; 4]);
     fn stroke(&mut self, path: &[PathOp], width: f64, c: Rgb, alpha: f64);
     /// Limit drawing to a rectangle (`None`: the whole buffer).

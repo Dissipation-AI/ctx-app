@@ -258,6 +258,7 @@ fn hit(items: &mut Vec<Item>, r: Rect, h: PanelHit) {
     items.push(Item { rect: r, op: Op::Clip(None), hit: Some(h) });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn chip(items: &mut Vec<Item>, ctx: &Ctx, x: f64, y: f64, label: &str, on: bool, hover: bool, h: PanelHit) -> f64 {
     let w = ctx.fonts.small.measure(label) / ctx.scale + 18.0;
     let r = Rect::new(x, y, w, 22.0);

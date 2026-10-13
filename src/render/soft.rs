@@ -227,15 +227,15 @@ fn shrink(g: &Glyph, k: f64, fit_h: f64) -> Glyph {
     let mut out = vec![0u8; (nw * nh * 4) as usize];
     for y in 0..nh {
         for x in 0..nw {
-            let (x0, x1) = ((x as f64 / k) as u32, (((x + 1) as f64 / k) as u32).min(g.width).max(x as u32 + 1));
-            let (y0, y1) = ((y as f64 / k) as u32, (((y + 1) as f64 / k) as u32).min(g.height).max(y as u32 + 1));
+            let (x0, x1) = ((x as f64 / k) as u32, (((x + 1) as f64 / k) as u32).min(g.width).max(x + 1));
+            let (y0, y1) = ((y as f64 / k) as u32, (((y + 1) as f64 / k) as u32).min(g.height).max(y + 1));
             let mut acc = [0u32; 4];
             let mut n = 0;
             for sy in y0..y1.min(g.height) {
                 for sx in x0..x1.min(g.width) {
                     let i = ((sy * g.width + sx) * 4) as usize;
-                    for c in 0..4 {
-                        acc[c] += g.data[i + c] as u32;
+                    for (a, v) in acc.iter_mut().zip(&g.data[i..i + 4]) {
+                        *a += *v as u32;
                     }
                     n += 1;
                 }

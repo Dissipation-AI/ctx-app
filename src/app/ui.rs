@@ -461,6 +461,7 @@ impl Menu {
 }
 
 /// Draw a menu. `s` is the backing scale.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_menu<C: Canvas>(c: &mut C, m: &Menu, frame: Rect, rows: &[Rect], label: &UiFont, small: &UiFont, col: &Colors, s: f64) {
     let px = |r: Rect| Rect::new(r.x * s, r.y * s, r.w * s, r.h * s);
     let f = px(frame);

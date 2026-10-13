@@ -656,20 +656,18 @@ fn window_event(id: WindowId, event: WindowEvent) {
             let (flags, mods) = INPUT.with(|i| i.borrow().get(&id).map(|st| (flags_of(st), st.mods)).unwrap_or_default());
             let base = event.key_without_modifiers();
             // Ctrl+Shift(+Alt) is the ⌘ of this platform.
-            if mods.control_key() && mods.shift_key() {
-                if let Some(k) = shortcut_key(&base) {
-                    let want = if mods.alt_key() { keys::COMMAND | keys::SHIFT } else { keys::COMMAND };
-                    let action = with_app(|a| {
-                        a.bindings.iter().find_map(|(act, s)| match keys::parse_shortcut(s) {
-                            Some((sk, sf)) if sf == want && (sk == k || shifted(&sk) == k) => Some(*act),
-                            _ => None,
-                        })
+            if mods.control_key() && mods.shift_key() && let Some(k) = shortcut_key(&base) {
+                let want = if mods.alt_key() { keys::COMMAND | keys::SHIFT } else { keys::COMMAND };
+                let action = with_app(|a| {
+                    a.bindings.iter().find_map(|(act, s)| match keys::parse_shortcut(s) {
+                        Some((sk, sf)) if sf == want && (sk == k || shifted(&sk) == k) => Some(*act),
+                        _ => None,
                     })
-                    .flatten();
-                    if let Some(act) = action {
-                        later(move |a| a.perform(act));
-                        return;
-                    }
+                })
+                .flatten();
+                if let Some(act) = action {
+                    later(move |a| a.perform(act));
+                    return;
                 }
             }
             let code = match &event.logical_key {
