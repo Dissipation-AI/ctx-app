@@ -367,6 +367,8 @@ pub struct App {
     /// Keystroke-to-pixels timing: when the last key went to the server, and measured times.
     pub key_sent: Option<(u64, Instant)>,
     pub key_echo: Option<(u64, Instant)>,
+    /// Secure Keyboard Entry is on.
+    pub secure_input: bool,
     pub latencies: Vec<Duration>,
     /// What each tab is doing (for the bar and the overview).
     pub statuses: HashMap<u64, Status>,
@@ -436,6 +438,7 @@ pub fn launched() {
         type_when_listed: Vec::new(),
         key_sent: None,
         key_echo: None,
+        secure_input: false,
         latencies: Vec::new(),
         statuses: HashMap::new(),
         output_at: HashMap::new(),
@@ -715,6 +718,24 @@ impl App {
             }
             StreamOut::Activity(entry) => self.on_activity(entry),
             StreamOut::Ended { .. } | StreamOut::Bytes(_) | StreamOut::Reply { .. } => {}
+        }
+        self.update_secure_input();
+    }
+
+    /// Secure Keyboard Entry (no other process can see keystrokes) is on while CTX.app is active
+    /// and a tab you're typing into is reading a password.
+    pub fn update_secure_input(&mut self) {
+        let want = self.active
+            && self.wins.values().any(|w| {
+                w.key
+                    && self
+                        .focused_tab(w.number)
+                        .and_then(|t| self.views.get(&t))
+                        .is_some_and(|v| v.screen.password_input)
+            });
+        if want != self.secure_input {
+            self.secure_input = want;
+            plat::set_secure_input(want);
         }
     }
 

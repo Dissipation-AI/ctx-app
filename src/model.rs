@@ -50,6 +50,8 @@ pub struct Screen {
     pub background: [u8; 3],
     pub mouse_tracking: bool,
     pub at_prompt: bool,
+    /// The program is reading a password (echo off).
+    pub password_input: bool,
     pub history_first: u64,
     pub history_end: u64,
     /// At least one update arrived.
@@ -82,6 +84,7 @@ impl Screen {
             background: [255, 255, 255],
             mouse_tracking: false,
             at_prompt: false,
+            password_input: false,
             history_first: 0,
             history_end: 0,
             received: false,
@@ -127,6 +130,7 @@ impl Screen {
         self.background = u.default_background;
         self.mouse_tracking = u.mouse_tracking;
         self.at_prompt = u.at_prompt;
+        self.password_input = u.password_input;
         self.history_first = u.history_first;
         self.history_end = u.history_end;
         self.received = true;
@@ -345,6 +349,7 @@ mod tests {
             cursor_blink: false,
             mouse_tracking: false,
             at_prompt: true,
+            password_input: false,
             history_first: first,
             history_end: end,
         }

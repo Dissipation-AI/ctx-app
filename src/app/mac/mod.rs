@@ -110,6 +110,16 @@ fn delegate_obj() -> Option<Retained<AnyObject>> {
 
 pub fn run() {
     let mtm = mtm();
+    // AppKit's AutoFill guesses (passwords, SMS codes) treat the terminal as a text field and
+    // start Safari's AutoFill service for it (com.apple.SafariPlatformSupport.Helper, 11-36 MB).
+    // This default turns the guessing off on macOS 26; on 27 it takes Info.plist's
+    // NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac. Edit > AutoFill still works. Ghostty
+    // does both.
+    let off: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
+        &[&*NSString::from_str("NSAutoFillHeuristicControllerEnabled")],
+        &[&**NSNumber::new_bool(false)],
+    );
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&off) };
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let d = AppDelegate::new(mtm);
@@ -286,6 +296,32 @@ pub fn ask_native(title: &str, text: &str, yes: &str, no: &str) -> bool {
 // Clipboard, links, cursors
 // ---------------------------------------------------------------------------------------------
 
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    fn EnableSecureEventInput() -> i32;
+    fn DisableSecureEventInput() -> i32;
+    fn IsSecureEventInputEnabled() -> u8;
+}
+
+/// Secure Keyboard Entry: while on, event taps in other processes don't get keystrokes. Calls
+/// are counted by the system, so `on` must alternate.
+pub fn set_secure_input(on: bool) {
+    // SAFETY: plain Carbon calls with no arguments.
+    unsafe {
+        if on {
+            EnableSecureEventInput();
+        } else {
+            DisableSecureEventInput();
+        }
+    }
+}
+
+/// Whether any process has Secure Keyboard Entry on.
+pub fn secure_input_enabled() -> bool {
+    // SAFETY: a plain Carbon query.
+    unsafe { IsSecureEventInputEnabled() != 0 }
+}
+
 pub fn set_clipboard(text: &str) {
     let pb = NSPasteboard::generalPasteboard();
     pb.clearContents();
@@ -392,45 +428,21 @@ define_class!(
         }
 
         #[unsafe(method(windowDidEnterFullScreen:))]
-        fn entered_full_screen(&self, n: &NSNotification) {
+        fn entered_full_screen(&self, _n: &NSNotification) {
             let w = self.ivars().window.get();
-            if let Some(win) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
-                round_corners(&win);
-            }
             later(move |a| a.window_full_screen(w, true));
         }
 
         #[unsafe(method(windowDidExitFullScreen:))]
-        fn exited_full_screen(&self, n: &NSNotification) {
+        fn exited_full_screen(&self, _n: &NSNotification) {
             let w = self.ivars().window.get();
-            if let Some(win) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
-                round_corners(&win);
-            }
             later(move |a| a.window_full_screen(w, false));
         }
     }
 );
 
-/// Corner radius of a window without a title bar, in points.
-const CORNER_RADIUS: f64 = 12.0;
-
-/// Round a title-bar-less window's corners (square in full screen), and reshape its shadow.
-fn round_corners(window: &NSWindow) {
-    if window.styleMask().contains(NSWindowStyleMask::Titled) {
-        return;
-    }
-    let full = window.styleMask().contains(NSWindowStyleMask::FullScreen);
-    if let Some(layer) = window.contentView().and_then(|v| v.layer()) {
-        layer.setCornerRadius(if full { 0.0 } else { CORNER_RADIUS });
-        layer.setMasksToBounds(true);
-    }
-    window.invalidateShadow();
-}
-
 define_class!(
-    /// A window without a title bar that still takes keyboard focus. With the tabs in the title
-    /// bar (the default) the bar is ours: we draw the red/yellow/green buttons, which saves the
-    /// ~4 MB the system's title bar costs (its buttons are SwiftUI views).
+    /// A window that never makes the system's red/yellow/green buttons (we draw our own).
     #[unsafe(super(NSWindow, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "CTXWindow"]
@@ -439,14 +451,9 @@ define_class!(
     unsafe impl NSObjectProtocol for BarWindow {}
 
     impl BarWindow {
-        #[unsafe(method(canBecomeKeyWindow))]
-        fn can_become_key(&self) -> bool {
-            true
-        }
-
-        #[unsafe(method(canBecomeMainWindow))]
-        fn can_become_main(&self) -> bool {
-            true
+        #[unsafe(method(standardWindowButton:forStyleMask:))]
+        fn standard_window_button(_b: NSWindowButton, _m: NSWindowStyleMask) -> *mut NSButton {
+            std::ptr::null_mut()
         }
     }
 );
@@ -454,26 +461,19 @@ define_class!(
 pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usize, titlebar_tabs: bool) -> Views {
     let mtm = mtm();
     let content = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(size.0, size.1));
+    let mut style = NSWindowStyleMask::Titled
+        | NSWindowStyleMask::Closable
+        | NSWindowStyleMask::Miniaturizable
+        | NSWindowStyleMask::Resizable;
+    if titlebar_tabs {
+        style |= NSWindowStyleMask::FullSizeContentView;
+    }
     let window: Retained<NSWindow> = if titlebar_tabs {
-        let style = NSWindowStyleMask::Borderless
-            | NSWindowStyleMask::Closable
-            | NSWindowStyleMask::Miniaturizable
-            | NSWindowStyleMask::Resizable;
         let w: Retained<BarWindow> = unsafe {
             msg_send![BarWindow::alloc(mtm), initWithContentRect: content, styleMask: style, backing: NSBackingStoreType::Buffered, defer: false]
         };
-        let w = Retained::into_super(w);
-        // Clear corners around the rounded content; the shadow follows them.
-        w.setOpaque(false);
-        w.setBackgroundColor(Some(&NSColor::clearColor()));
-        w.setHasShadow(true);
-        w.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenPrimary);
-        w
+        Retained::into_super(w)
     } else {
-        let style = NSWindowStyleMask::Titled
-            | NSWindowStyleMask::Closable
-            | NSWindowStyleMask::Miniaturizable
-            | NSWindowStyleMask::Resizable;
         unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(mtm),
@@ -484,6 +484,16 @@ pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usi
             )
         }
     };
+    if titlebar_tabs {
+        // The title bar is see-through and covered by our content: the tabs and the
+        // red/yellow/green buttons are ours (BarWindow never makes the system's, which are
+        // SwiftUI views, ~3 MB), the shadow and rounded corners the system's. A borderless window
+        // looks the same, but WindowServer kept ~130 MB more for it, mostly for the shadow it
+        // works out from the window's pixels. See docs/memory.md.
+        window.setTitlebarAppearsTransparent(true);
+        window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+        window.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenPrimary);
+    }
     unsafe { window.setReleasedWhenClosed(false) };
     window.setTabbingMode(NSWindowTabbingMode::Disallowed);
     window.setRestorable(false);
@@ -509,7 +519,6 @@ pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usi
     let view = ContentView::new(mtm, n);
     window.setContentView(Some(&view));
     window.makeFirstResponder(Some(&view));
-    round_corners(&window);
     Views { window, delegate: wdelegate, view, titlebar_tabs }
 }
 

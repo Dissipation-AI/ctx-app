@@ -181,8 +181,11 @@ impl BarLayout {
     /// Add the window's red/yellow/green buttons in the room left of the tabs.
     pub fn with_lights(mut self) -> BarLayout {
         let y = ((BAR_H - LIGHT_D) / 2.0).round();
-        self.lights =
-            LIGHTS.iter().enumerate().map(|(i, l)| (*l, Rect::new(LIGHT_X + i as f64 * LIGHT_STEP, y, LIGHT_D, LIGHT_D))).collect();
+        self.lights = LIGHTS
+            .iter()
+            .enumerate()
+            .map(|(i, l)| (*l, Rect::new(LIGHT_X + i as f64 * LIGHT_STEP, y, LIGHT_D, LIGHT_D)))
+            .collect();
         self
     }
 

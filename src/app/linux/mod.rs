@@ -482,6 +482,13 @@ pub fn window_at(app: &App, sx: f64, sy: f64) -> Option<(u64, f64, f64)> {
     None
 }
 
+/// No system-wide equivalent of macOS Secure Keyboard Entry.
+pub fn set_secure_input(_on: bool) {}
+
+pub fn secure_input_enabled() -> bool {
+    false
+}
+
 pub fn set_cursor(c: Cursor) {
     let icon = match c {
         Cursor::Arrow => CursorIcon::Default,

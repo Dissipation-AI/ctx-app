@@ -31,8 +31,10 @@ pixels from the same code, and only the window, input and font plumbing differ (
   listed in the Window menu, and `ctx show "<tab>"` brings one forward. Closing an app window closes
   the `ctx` window (with the usual "processes are running" confirmation). The app does nothing for
   a window nobody can see (covered, minimised, on another Space).
-- **The tab bar is the title bar** (`tabs_in_titlebar = true`, the default): the window has no
-  system title bar (on macOS its SwiftUI buttons cost ~4 MB); the app draws the red/yellow/green
+- **The tab bar is the title bar** (`tabs_in_titlebar = true`, the default): on macOS the
+  window's title bar is see-through and covered by the tab bar, and the system's buttons (SwiftUI
+  views, ~3 MB) are never created (a borderless window cost ~130 MB in WindowServer; see
+  [docs/memory.md](docs/memory.md)); on Linux the window is undecorated. The app draws the red/yellow/green
   buttons as three circles (grey when the window isn't focused, still there in full screen, ⌥-click
   on green zooms), and on Linux the window resizes from a band along its edges. Tabs sit next to
   those buttons, notebook style, rounded on top, with the selected tab flowing into the terminal
@@ -112,6 +114,14 @@ on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the ma
   | **IOSurface + Core Text (chosen)** | **44 MB** | **101 MB** | **43 MB** |
 
   A full repaint of every cell takes 2–4 ms; normal updates redraw only changed rows.
+
+  These are the app's own footprints. WindowServer's share has to be counted too
+  (`scripts/membench`, 2026-10-14): with a borderless window WindowServer kept ~130–160 MB per
+  1496×938 window, whichever way the pixels were handed over (IOSurface, CGImage, or a
+  CAMetalLayer that also cost the app 163 MB). A titled window with a hidden, see-through title bar
+  brought it to about zero. Handing over a CGImage made the app look 20 MB smaller only because
+  the copy-on-write pages it shares aren't charged to any process; the IOSurface stays. All
+  experiments: [docs/memory.md](docs/memory.md).
   - Draw only when the server sends a change or the user scrolls/selects. No render loop. Cursor
     blink uses a timer that redraws just the cursor's row, and only runs while needed.
   - When a window is minimised, fully covered or on another Space, its surface is released
@@ -148,6 +158,10 @@ on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the ma
 - Dropping files on a tab types their paths, shell-quoted (as Terminal.app does).
 - Paste goes through the server's bracketed paste. Pasting more than one line into a shell prompt
   (not a full-screen program) shows a one-line preview first. Configurable.
+- Passwords: while CTX.app is active and the tab you're typing into is reading a password (the
+  server's `password_input`), Secure Keyboard Entry is on, so no other process sees the keys. It
+  goes off when the prompt ends, the tab changes or the app goes to the background. The app logs
+  no keystrokes. See ctx's SPEC, Passwords.
 
 ## Keyboard shortcuts (Terminal.app conventions)
 
@@ -337,6 +351,11 @@ What the viewer needs from the model, added to `ctx-protocol` and the server:
 - A cursor move alone is sent as an update (arrow keys move the cursor at once).
 - `Starters`: the first commands run in tabs, with folder, count and when last used.
 - `Processes`: a tab's process tree.
+
+## Protocol version 4
+
+- Screen updates carry `password_input`: the program in front is reading a password.
+- Activity entries carry `typed_hidden`: text was typed but kept out of the log.
 
 ## Acceptance tests
 
