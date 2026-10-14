@@ -70,11 +70,11 @@ draws one tab without a window. All of these run on Linux too.
 | Reference screens (`tests/reference/linux`) | pass |
 | `kill -9` and relaunch | 4/4 checks pass |
 
-Built and type-checked for macOS (`cargo clippy --target aarch64-apple-darwin`) but not yet run
-there since the drawn tab bar went in: tabs in the title bar (clicks under the transparent title
-bar, traffic-light placement), drag out to a new window, the sRGB surface tag and
-`scripts/install-mac.sh` need a pass on a Mac. If the title-bar tabs misbehave,
-`tabs_in_titlebar = false` puts them below a normal title bar.
+Windows have no window-system title bar on either platform: the tab bar is the top of the window,
+with red/yellow/green buttons CTX draws itself (on macOS the system's title bar cost ~4 MB). Tried
+on a Mac; on Linux the undecorated window, its drawn buttons and resizing from its edges haven't
+been built or run yet and need a pass. `tabs_in_titlebar = false` brings back the window system's
+title bar with the tabs below it.
 
 ## Not done yet
 

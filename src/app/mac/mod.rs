@@ -3,8 +3,8 @@
 //! Everything inside a window (tab bar, terminal, panels) is drawn by the shared app; these
 //! classes hold almost no state and forward to the [`App`].
 //!
-//! With `tabs_in_titlebar` (the default) the window's content runs under a transparent title
-//! bar, and the tabs sit beside the red/yellow/green buttons, which are re-centred in the bar.
+//! With `tabs_in_titlebar` (the default) the window has no title bar at all: the tab bar is the
+//! top of the window, with red/yellow/green buttons we draw ourselves (the system's cost ~4 MB).
 
 pub mod install;
 pub mod watch;
@@ -353,11 +353,8 @@ define_class!(
         }
 
         #[unsafe(method(windowDidResize:))]
-        fn did_resize(&self, n: &NSNotification) {
+        fn did_resize(&self, _n: &NSNotification) {
             let w = self.ivars().window.get();
-            if let Some(win) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
-                place_traffic_lights(&win);
-            }
             call(move |a| a.window_resized(w));
         }
 
@@ -395,8 +392,11 @@ define_class!(
         }
 
         #[unsafe(method(windowDidEnterFullScreen:))]
-        fn entered_full_screen(&self, _n: &NSNotification) {
+        fn entered_full_screen(&self, n: &NSNotification) {
             let w = self.ivars().window.get();
+            if let Some(win) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
+                round_corners(&win);
+            }
             later(move |a| a.window_full_screen(w, true));
         }
 
@@ -404,66 +404,91 @@ define_class!(
         fn exited_full_screen(&self, n: &NSNotification) {
             let w = self.ivars().window.get();
             if let Some(win) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
-                place_traffic_lights(&win);
+                round_corners(&win);
             }
             later(move |a| a.window_full_screen(w, false));
         }
     }
 );
 
-/// Centre the red/yellow/green buttons in the tab bar (the title bar is taller than usual).
-fn place_traffic_lights(window: &NSWindow) {
-    if !window.styleMask().contains(NSWindowStyleMask::FullSizeContentView) {
+/// Corner radius of a window without a title bar, in points.
+const CORNER_RADIUS: f64 = 12.0;
+
+/// Round a title-bar-less window's corners (square in full screen), and reshape its shadow.
+fn round_corners(window: &NSWindow) {
+    if window.styleMask().contains(NSWindowStyleMask::Titled) {
         return;
     }
-    let buttons: Vec<Retained<NSButton>> =
-        [NSWindowButton::CloseButton, NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton]
-            .into_iter()
-            .filter_map(|b| window.standardWindowButton(b))
-            .collect();
-    let Some(first) = buttons.first() else { return };
-    // SAFETY: plain view hierarchy reads.
-    let Some(container) = (unsafe { first.superview().and_then(|v| v.superview()) }) else { return };
-    let bar = super::chrome::BAR_H;
-    let mut f = container.frame();
-    f.size.height = bar;
-    f.origin.y = window.frame().size.height - bar;
-    container.setFrame(f);
-    for (i, b) in buttons.iter().enumerate() {
-        let mut bf = b.frame();
-        bf.origin.x = 14.0 + i as f64 * 20.0;
-        bf.origin.y = ((bar - bf.size.height) / 2.0).round();
-        b.setFrameOrigin(bf.origin);
+    let full = window.styleMask().contains(NSWindowStyleMask::FullScreen);
+    if let Some(layer) = window.contentView().and_then(|v| v.layer()) {
+        layer.setCornerRadius(if full { 0.0 } else { CORNER_RADIUS });
+        layer.setMasksToBounds(true);
     }
+    window.invalidateShadow();
 }
+
+define_class!(
+    /// A window without a title bar that still takes keyboard focus. With the tabs in the title
+    /// bar (the default) the bar is ours: we draw the red/yellow/green buttons, which saves the
+    /// ~4 MB the system's title bar costs (its buttons are SwiftUI views).
+    #[unsafe(super(NSWindow, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "CTXWindow"]
+    pub struct BarWindow;
+
+    unsafe impl NSObjectProtocol for BarWindow {}
+
+    impl BarWindow {
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method(canBecomeMainWindow))]
+        fn can_become_main(&self) -> bool {
+            true
+        }
+    }
+);
 
 pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usize, titlebar_tabs: bool) -> Views {
     let mtm = mtm();
     let content = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(size.0, size.1));
-    let mut style = NSWindowStyleMask::Titled
-        | NSWindowStyleMask::Closable
-        | NSWindowStyleMask::Miniaturizable
-        | NSWindowStyleMask::Resizable;
-    if titlebar_tabs {
-        style |= NSWindowStyleMask::FullSizeContentView;
-    }
-    let window = unsafe {
-        NSWindow::initWithContentRect_styleMask_backing_defer(
-            NSWindow::alloc(mtm),
-            content,
-            style,
-            NSBackingStoreType::Buffered,
-            false,
-        )
+    let window: Retained<NSWindow> = if titlebar_tabs {
+        let style = NSWindowStyleMask::Borderless
+            | NSWindowStyleMask::Closable
+            | NSWindowStyleMask::Miniaturizable
+            | NSWindowStyleMask::Resizable;
+        let w: Retained<BarWindow> = unsafe {
+            msg_send![BarWindow::alloc(mtm), initWithContentRect: content, styleMask: style, backing: NSBackingStoreType::Buffered, defer: false]
+        };
+        let w = Retained::into_super(w);
+        // Clear corners around the rounded content; the shadow follows them.
+        w.setOpaque(false);
+        w.setBackgroundColor(Some(&NSColor::clearColor()));
+        w.setHasShadow(true);
+        w.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenPrimary);
+        w
+    } else {
+        let style = NSWindowStyleMask::Titled
+            | NSWindowStyleMask::Closable
+            | NSWindowStyleMask::Miniaturizable
+            | NSWindowStyleMask::Resizable;
+        unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                NSWindow::alloc(mtm),
+                content,
+                style,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        }
     };
     unsafe { window.setReleasedWhenClosed(false) };
     window.setTabbingMode(NSWindowTabbingMode::Disallowed);
     window.setRestorable(false);
     window.setContentMinSize(NSSize::new(360.0, 160.0));
-    if titlebar_tabs {
-        window.setTitlebarAppearsTransparent(true);
-        window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
-    }
+    window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
     let wdelegate = {
         let this = WindowDelegate::alloc(mtm).set_ivars(WinIvars { window: Cell::new(n) });
         let d: Retained<WindowDelegate> = unsafe { msg_send![super(this), init] };
@@ -484,7 +509,7 @@ pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usi
     let view = ContentView::new(mtm, n);
     window.setContentView(Some(&view));
     window.makeFirstResponder(Some(&view));
-    place_traffic_lights(&window);
+    round_corners(&window);
     Views { window, delegate: wdelegate, view, titlebar_tabs }
 }
 
@@ -571,8 +596,13 @@ pub fn drag_window(v: &Views) {
 
 /// Room for the red/yellow/green buttons at the left of the bar.
 pub fn titlebar_inset(v: &Views) -> f64 {
-    let full = v.window.styleMask().contains(NSWindowStyleMask::FullScreen);
-    if v.titlebar_tabs && !full { super::chrome::TRAFFIC_LIGHTS } else { 8.0 }
+    if draws_window_buttons(v) { super::chrome::TRAFFIC_LIGHTS } else { 8.0 }
+}
+
+/// The bar shows our red/yellow/green buttons: the window has no title bar. They stay in full
+/// screen too (the bar is always shown there), so green leaves it the way it came in.
+pub fn draws_window_buttons(v: &Views) -> bool {
+    v.titlebar_tabs
 }
 
 pub fn new_surface(_v: &Views, w: usize, h: usize) -> Option<Surface> {

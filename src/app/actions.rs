@@ -841,8 +841,11 @@ impl App {
         }
     }
 
-    /// What's still running, for the quit confirmation.
+    /// What's still running, for the quit confirmation (none when quitting keeps the tabs).
     pub fn quit_summary(&self) -> Option<String> {
+        if self.loaded.keep_tabs_when_app_quits {
+            return None;
+        }
         let busy: Vec<String> = self
             .list
             .windows

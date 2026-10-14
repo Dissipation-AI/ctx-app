@@ -443,6 +443,10 @@ impl App {
             && rects.iter().any(|(x, _)| *x == t)
         {
             self.key_echo = None;
+            // Bounded: the newest measurements are enough.
+            if self.latencies.len() >= 1000 {
+                self.latencies.drain(..500);
+            }
             self.latencies.push(at.elapsed());
         }
         // Remember what's drawn where, for the next partial update.

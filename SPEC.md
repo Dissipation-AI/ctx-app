@@ -31,8 +31,11 @@ pixels from the same code, and only the window, input and font plumbing differ (
   listed in the Window menu, and `ctx show "<tab>"` brings one forward. Closing an app window closes
   the `ctx` window (with the usual "processes are running" confirmation). The app does nothing for
   a window nobody can see (covered, minimised, on another Space).
-- **The tab bar is the title bar** (`tabs_in_titlebar = true`, the default): tabs sit next to the
-  traffic lights, notebook style, rounded on top, with the selected tab flowing into the terminal
+- **The tab bar is the title bar** (`tabs_in_titlebar = true`, the default): the window has no
+  system title bar (on macOS its SwiftUI buttons cost ~4 MB); the app draws the red/yellow/green
+  buttons as three circles (grey when the window isn't focused, still there in full screen, ⌥-click
+  on green zooms), and on Linux the window resizes from a band along its edges. Tabs sit next to
+  those buttons, notebook style, rounded on top, with the selected tab flowing into the terminal
   below it. Each tab has two lines: its label in a large, uniform font on top, its folder smaller
   and dimmer underneath, and a status dot (idle, busy, agent working, agent waiting for you; agents
   are recognised by program name: claude, codex, gemini, aider, …). When tabs don't fit, the bar
@@ -151,7 +154,7 @@ on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the ma
 | Shortcut | Action |
 |---|---|
 | ⌘N | New window |
-| ⌘Q | Quit (confirms if commands are running) |
+| ⌘Q | Quit; tabs keep running (with `keep_tabs_when_app_quits = false`: closes them, confirming if commands are running) |
 | ⌘C / ⌘V | Copy selection / paste |
 | ⌘A | Select all in this tab |
 | ⌘T | New tab (same folder as current tab) |

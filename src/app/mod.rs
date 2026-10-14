@@ -1295,6 +1295,9 @@ impl App {
                 bar = chrome::bar_layout(&ids, cw, inset, scroll);
             }
         }
+        if plat::draws_window_buttons(&win.views) {
+            bar = bar.with_lights();
+        }
         let scroll = bar.tabs.first().map(|(_, r)| (bar.strip.x - r.x).max(0.0)).unwrap_or(0.0);
         let mut top = chrome::BAR_H;
         if win.reopen_offer.is_some() {
@@ -1366,6 +1369,14 @@ impl App {
         }
         tabs.sort();
         if tabs != self.subscribed {
+            // Tabs no longer shown keep only their screen: their scrollback cache goes.
+            for t in &self.subscribed {
+                if !tabs.contains(t)
+                    && let Some(v) = self.views.get_mut(t)
+                {
+                    v.history.forget();
+                }
+            }
             for t in &tabs {
                 if !self.subscribed.contains(t)
                     && let Some(v) = self.views.get_mut(t)

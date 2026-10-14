@@ -337,6 +337,28 @@ impl App {
                 self.plus_menu(w, x, y);
                 return;
             }
+            Hit::Light(l) => {
+                match l {
+                    // As the system's red button: asks first if something is running.
+                    chrome::Light::Close => self.close_window(w, false),
+                    chrome::Light::Minimise => {
+                        if let Some(win) = self.wins.get(&w) {
+                            plat::minimise(&win.views);
+                        }
+                    }
+                    // ⌥-click zooms instead, as on macOS.
+                    chrome::Light::FullScreen => {
+                        if let Some(win) = self.wins.get(&w) {
+                            if flags & keys::OPTION != 0 {
+                                plat::zoom(&win.views);
+                            } else {
+                                plat::toggle_full_screen(&win.views);
+                            }
+                        }
+                    }
+                }
+                return;
+            }
             Hit::Button(b) => {
                 let kind = match b {
                     chrome::Button::Overview => Kind::Overview,
