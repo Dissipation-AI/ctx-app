@@ -70,11 +70,19 @@ draws one tab without a window. All of these run on Linux too.
 | Reference screens (`tests/reference/linux`) | pass |
 | `kill -9` and relaunch | 4/4 checks pass |
 
-Windows have no window-system title bar on either platform: the tab bar is the top of the window,
-with red/yellow/green buttons CTX draws itself (on macOS the system's title bar cost ~4 MB). Tried
-on a Mac; on Linux the undecorated window, its drawn buttons and resizing from its edges haven't
-been built or run yet and need a pass. `tabs_in_titlebar = false` brings back the window system's
-title bar with the tabs below it.
+The tab bar is the top of the window, with red/yellow/green buttons CTX draws itself. On macOS the
+window is a normal titled window whose title bar is see-through and covered by the tab bar; the
+system's own buttons (SwiftUI views, ~3 MB) are never created. A borderless window looks the same
+but cost ~130 MB more in WindowServer, mostly for the shadow it works out from the window's
+pixels; see [docs/memory.md](docs/memory.md). On Linux the window is undecorated; its drawn
+buttons and resizing from its edges haven't been run yet and need a pass. `tabs_in_titlebar =
+false` brings back the window system's title bar with the tabs below it.
+
+### Memory against other terminals
+
+`scripts/membench/run.sh all active` runs the same workload in Ghostty, Terminal.app and CTX and
+counts what each costs the whole Mac: the app, per-tab launchers, helper processes macOS starts for
+it, and its share of WindowServer. See [scripts/membench/README.md](scripts/membench/README.md).
 
 ## Not done yet
 

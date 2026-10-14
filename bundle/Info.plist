@@ -26,6 +26,8 @@
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
+    <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Apache-2.0</string>
 </dict>
