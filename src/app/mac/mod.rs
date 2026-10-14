@@ -286,6 +286,32 @@ pub fn ask_native(title: &str, text: &str, yes: &str, no: &str) -> bool {
 // Clipboard, links, cursors
 // ---------------------------------------------------------------------------------------------
 
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    fn EnableSecureEventInput() -> i32;
+    fn DisableSecureEventInput() -> i32;
+    fn IsSecureEventInputEnabled() -> u8;
+}
+
+/// Secure Keyboard Entry: while on, event taps in other processes don't get keystrokes. Calls
+/// are counted by the system, so `on` must alternate.
+pub fn set_secure_input(on: bool) {
+    // SAFETY: plain Carbon calls with no arguments.
+    unsafe {
+        if on {
+            EnableSecureEventInput();
+        } else {
+            DisableSecureEventInput();
+        }
+    }
+}
+
+/// Whether any process has Secure Keyboard Entry on.
+pub fn secure_input_enabled() -> bool {
+    // SAFETY: a plain Carbon query.
+    unsafe { IsSecureEventInputEnabled() != 0 }
+}
+
 pub fn set_clipboard(text: &str) {
     let pb = NSPasteboard::generalPasteboard();
     pb.clearContents();

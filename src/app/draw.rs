@@ -17,6 +17,8 @@ use std::time::Instant;
 
 impl App {
     pub fn redraw_dirty(&mut self) {
+        // Focus, the active app and the tab in front all change before a redraw.
+        self.update_secure_input();
         let ws: Vec<u64> = self
             .wins
             .iter()

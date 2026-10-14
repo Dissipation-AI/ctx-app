@@ -148,6 +148,10 @@ on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the ma
 - Dropping files on a tab types their paths, shell-quoted (as Terminal.app does).
 - Paste goes through the server's bracketed paste. Pasting more than one line into a shell prompt
   (not a full-screen program) shows a one-line preview first. Configurable.
+- Passwords: while CTX.app is active and the tab you're typing into is reading a password (the
+  server's `password_input`), Secure Keyboard Entry is on, so no other process sees the keys. It
+  goes off when the prompt ends, the tab changes or the app goes to the background. The app logs
+  no keystrokes. See ctx's SPEC, Passwords.
 
 ## Keyboard shortcuts (Terminal.app conventions)
 
@@ -337,6 +341,11 @@ What the viewer needs from the model, added to `ctx-protocol` and the server:
 - A cursor move alone is sent as an update (arrow keys move the cursor at once).
 - `Starters`: the first commands run in tabs, with folder, count and when last used.
 - `Processes`: a tab's process tree.
+
+## Protocol version 4
+
+- Screen updates carry `password_input`: the program in front is reading a password.
+- Activity entries carry `typed_hidden`: text was typed but kept out of the log.
 
 ## Acceptance tests
 

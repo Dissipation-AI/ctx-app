@@ -24,6 +24,8 @@ pub struct Report {
     pub count: usize,
     pub cols: u16,
     pub cursor: Option<(u16, u16)>,
+    /// Another app had Secure Keyboard Entry on before the test (so "off" can't be checked).
+    pub secure_elsewhere: bool,
 }
 
 impl Report {
@@ -342,6 +344,39 @@ pub fn start() {
         // `cat` echoes at once, so this times the terminal, not the shell's line editor.
         type_text(app, r.window, "cat");
         enter(app, r.window);
+    }));
+    // A password prompt turns on Secure Keyboard Entry, only while CTX.app is active.
+    steps.push_back(Box::new(|app, r| {
+        r.secure_elsewhere = plat::secure_input_enabled();
+        if let Some(win) = app.wins.get(&r.window) {
+            plat::show_window(&win.views, true);
+        }
+        app.window_key(r.window, true);
+        app.input(r.tab, ctx_protocol::AppInput::Key { key: "ctrl-c".into(), text: None });
+    }));
+    steps.push_back(Box::new(|app, r| {
+        type_text(app, r.window, "read -s 'pw?Password: '");
+        enter(app, r.window);
+    }));
+    steps.push_back(Box::new(|app, r| {
+        let on = |app: &App| app.secure_input && (cfg!(not(target_os = "macos")) || plat::secure_input_enabled());
+        r.check(on(app), "Secure Keyboard Entry is on at a password prompt");
+        app.app_active(false);
+        r.check(
+            !app.secure_input && (r.secure_elsewhere || !plat::secure_input_enabled()),
+            "and off when CTX.app isn't active",
+        );
+        app.app_active(true);
+        r.check(on(app), "and on again when it's active");
+        type_text(app, r.window, "hunter2");
+        enter(app, r.window);
+    }));
+    steps.push_back(Box::new(|app, r| {
+        r.check(
+            !app.secure_input && (r.secure_elsewhere || !plat::secure_input_enabled()),
+            "Secure Keyboard Entry is off once the password has been entered",
+        );
+        r.check(!screen_text(app, r.tab).iter().any(|l| l.contains("hunter2")), "the password isn't shown");
     }));
     steps.push_back(Box::new(|app, _r| app.latencies.clear()));
     // Keystroke to pixels: type characters one at a time and time each echo being drawn.
