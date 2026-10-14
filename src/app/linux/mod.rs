@@ -26,7 +26,7 @@ use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, StartCause,
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-use winit::window::{CursorIcon, Window, WindowId};
+use winit::window::{CursorIcon, ResizeDirection, Window, WindowId};
 
 /// Dialogs are drawn by the app (there's no native alert to borrow).
 pub const NATIVE_DIALOGS: bool = false;
@@ -278,6 +278,8 @@ type Soft = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 pub struct Views {
     pub window: Rc<Window>,
     soft: RefCell<Option<Soft>>,
+    /// No window-manager title bar: the tab bar is the top, with our own buttons.
+    titlebar_tabs: bool,
 }
 
 impl Drop for Views {
@@ -289,12 +291,12 @@ impl Drop for Views {
     }
 }
 
-pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usize, _titlebar_tabs: bool) -> Views {
+pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usize, titlebar_tabs: bool) -> Views {
     let el = LOOP.with(|l| l.get());
     assert!(!el.is_null(), "windows are made inside an event loop callback");
     // SAFETY: set by `with_loop` for the duration of the callback we're in.
     let el = unsafe { &*el };
-    let mut attrs = Window::default_attributes().with_title("CTX");
+    let mut attrs = Window::default_attributes().with_title("CTX").with_decorations(!titlebar_tabs);
     match frame {
         Some([x, y, w, h]) => {
             attrs =
@@ -313,7 +315,7 @@ pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usi
     WINDOWS.with(|w| w.borrow_mut().insert(window.id(), n));
     ALL.with(|a| a.borrow_mut().push(Rc::downgrade(&window)));
     let soft = softbuffer::Context::new(window.clone()).ok().and_then(|ctx| Soft::new(&ctx, window.clone()).ok());
-    Views { window, soft: RefCell::new(soft) }
+    Views { window, soft: RefCell::new(soft), titlebar_tabs }
 }
 
 pub fn backing_scale(v: &Views) -> f64 {
@@ -383,9 +385,53 @@ pub fn drag_window(v: &Views) {
     let _ = v.window.drag_window();
 }
 
-/// No window buttons share the bar here.
-pub fn titlebar_inset(_v: &Views) -> f64 {
-    8.0
+/// Room for the red/yellow/green buttons at the left of the bar.
+pub fn titlebar_inset(v: &Views) -> f64 {
+    if draws_window_buttons(v) { super::chrome::TRAFFIC_LIGHTS } else { 8.0 }
+}
+
+/// The bar shows our red/yellow/green buttons: no window-manager title bar. They stay in full
+/// screen too, so green leaves it the way it came in.
+pub fn draws_window_buttons(v: &Views) -> bool {
+    v.titlebar_tabs
+}
+
+/// Width of the band along an undecorated window's edges that resizes it, in points.
+const RESIZE_EDGE: f64 = 5.0;
+
+/// Which edge of an undecorated window `(x, y)` (points) is on, if it can be resized there.
+fn resize_edge(window: &Window, x: f64, y: f64, k: f64) -> Option<ResizeDirection> {
+    if window.is_decorated() || window.fullscreen().is_some() || window.is_maximized() {
+        return None;
+    }
+    let s = window.inner_size();
+    let (w, h) = (s.width as f64 / k, s.height as f64 / k);
+    let (l, r, t, b) = (x < RESIZE_EDGE, x > w - RESIZE_EDGE, y < RESIZE_EDGE, y > h - RESIZE_EDGE);
+    Some(match (l, r, t, b) {
+        (true, _, true, _) => ResizeDirection::NorthWest,
+        (_, true, true, _) => ResizeDirection::NorthEast,
+        (true, _, _, true) => ResizeDirection::SouthWest,
+        (_, true, _, true) => ResizeDirection::SouthEast,
+        (true, ..) => ResizeDirection::West,
+        (_, true, ..) => ResizeDirection::East,
+        (_, _, true, _) => ResizeDirection::North,
+        (.., true) => ResizeDirection::South,
+        _ => return None,
+    })
+}
+
+fn resize_cursor(d: ResizeDirection) -> CursorIcon {
+    match d {
+        ResizeDirection::East | ResizeDirection::West => CursorIcon::EwResize,
+        ResizeDirection::North | ResizeDirection::South => CursorIcon::NsResize,
+        ResizeDirection::NorthWest | ResizeDirection::SouthEast => CursorIcon::NwseResize,
+        ResizeDirection::NorthEast | ResizeDirection::SouthWest => CursorIcon::NeswResize,
+    }
+}
+
+/// Our winit window for an event's window id.
+fn window_of(id: WindowId) -> Option<Rc<Window>> {
+    ALL.with(|all| all.borrow().iter().filter_map(|w| w.upgrade()).find(|w| w.id() == id))
 }
 
 pub fn new_surface(_v: &Views, w: usize, h: usize) -> Option<Surface> {
@@ -733,6 +779,14 @@ fn window_event(id: WindowId, event: WindowEvent) {
                 st.pos = (position.x / k, position.y / k);
                 (st.pos.0, st.pos.1, flags_of(st), st.buttons.last().copied())
             });
+            // Over the edge of an undecorated window: show that it resizes.
+            if button.is_none()
+                && let Some(win) = window_of(id)
+                && let Some(d) = resize_edge(&win, x, y, scale_of(w))
+            {
+                win.set_cursor(resize_cursor(d));
+                return;
+            }
             match button {
                 Some(b) => call(move |a| a.mouse_dragged(w, x, y, flags, b)),
                 None => call(move |a| a.mouse_moved(w, x, y, flags)),
@@ -746,6 +800,18 @@ fn window_event(id: WindowId, event: WindowEvent) {
                 MouseButton::Middle => 3,
                 _ => return,
             };
+            // A press on the edge of an undecorated window resizes it (the window system takes the
+            // drag from here, so the app never sees this press or its release).
+            if state == ElementState::Pressed
+                && b == 1
+                && let Some(win) = window_of(id)
+            {
+                let (x, y) = INPUT.with(|i| i.borrow().get(&id).map(|st| st.pos).unwrap_or_default());
+                if let Some(d) = resize_edge(&win, x, y, scale_of(w)) {
+                    let _ = win.drag_resize_window(d);
+                    return;
+                }
+            }
             let (x, y, flags, clicks) = INPUT.with(|i| {
                 let mut i = i.borrow_mut();
                 let st = i.get_mut(&id).unwrap();

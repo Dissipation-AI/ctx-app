@@ -80,9 +80,23 @@ pub const BUTTONS: [(Button, &str); 3] = [
     (Button::Activity, "Activity of other programs (⇧⌘A)"),
 ];
 
+/// The window's red/yellow/green buttons, drawn by us (the window has no title bar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Light {
+    Close,
+    Minimise,
+    FullScreen,
+}
+
+const LIGHTS: [Light; 3] = [Light::Close, Light::Minimise, Light::FullScreen];
+const LIGHT_D: f64 = 12.0;
+const LIGHT_X: f64 = 14.0;
+const LIGHT_STEP: f64 = 20.0;
+
 /// Where the pointer is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
+    Light(Light),
     Tab {
         tab: u64,
         index: usize,
@@ -120,6 +134,8 @@ pub struct BarLayout {
     pub right: Option<Rect>,
     /// The visible span of the tab strip.
     pub strip: Rect,
+    /// The window's buttons, when we draw them (the window has no title bar).
+    pub lights: Vec<(Light, Rect)>,
 }
 
 /// Lay out `n` tabs in a bar `w` points wide, scrolled by `scroll` points, starting at `inset`.
@@ -157,10 +173,19 @@ pub fn bar_layout(ids: &[u64], w: f64, inset: f64, scroll: f64) -> BarLayout {
         left: overflow.then(|| Rect::new(strip_x, TAB_TOP, CHEVRON_W, BAR_H - TAB_TOP)),
         right: overflow.then(|| Rect::new(sx + sw, TAB_TOP, CHEVRON_W, BAR_H - TAB_TOP)),
         strip: Rect::new(sx, 0.0, sw, BAR_H),
+        lights: Vec::new(),
     }
 }
 
 impl BarLayout {
+    /// Add the window's red/yellow/green buttons in the room left of the tabs.
+    pub fn with_lights(mut self) -> BarLayout {
+        let y = ((BAR_H - LIGHT_D) / 2.0).round();
+        self.lights =
+            LIGHTS.iter().enumerate().map(|(i, l)| (*l, Rect::new(LIGHT_X + i as f64 * LIGHT_STEP, y, LIGHT_D, LIGHT_D))).collect();
+        self
+    }
+
     /// Scroll that keeps `tab` in view.
     pub fn scroll_to(&self, tab: u64, scroll: f64) -> f64 {
         let Some((_, r)) = self.tabs.iter().find(|(t, _)| *t == tab) else { return scroll };
@@ -175,6 +200,12 @@ impl BarLayout {
     }
 
     pub fn hit(&self, x: f64, y: f64) -> Hit {
+        // A little slack around each button, as with the system's.
+        for (l, r) in &self.lights {
+            if Rect::new(r.x - 3.0, r.y - 3.0, r.w + 6.0, r.h + 6.0).contains(x, y) {
+                return Hit::Light(*l);
+            }
+        }
         for (b, r) in &self.buttons {
             if r.contains(x, y) {
                 return Hit::Button(*b);
@@ -237,6 +268,7 @@ fn px(r: Rect, s: f64) -> Rect {
 pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &Colors, s: f64) {
     let bar = Rect::new(0.0, 0.0, f.width * s, BAR_H * s);
     c.fill(col.bar, 1.0, bar.x, bar.y, bar.w, bar.h);
+    draw_lights(c, f, col, s);
     let strip = px(f.layout.strip, s);
     c.clip(Some((strip.x, 0.0, strip.w, bar.h)));
     // Unselected tabs first, so the selected one's curves sit on top.
@@ -325,6 +357,26 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
             c.fill_rounded(col.hover, 1.0, r.x + 2.0 * s, r.y, r.w - 4.0 * s, r.h, [7.0 * s; 4]);
         }
         draw_icon(c, *b, r, col.dim, s);
+    }
+}
+
+/// The red/yellow/green buttons: plain circles, grey while the window isn't focused.
+fn draw_lights<C: Canvas>(c: &mut C, f: &BarFrame, col: &Colors, s: f64) {
+    for (l, r) in &f.layout.lights {
+        let fill: Rgb = if !f.active {
+            mix(col.bar, col.text, 0.2)
+        } else {
+            match l {
+                Light::Close => [0xff, 0x5f, 0x57],
+                Light::Minimise => [0xfe, 0xbc, 0x2e],
+                Light::FullScreen => [0x28, 0xc8, 0x40],
+            }
+        };
+        let r = px(*r, s);
+        // A faint darker rim, as the system draws.
+        c.fill_rounded(mix(fill, [0, 0, 0], 0.12), 1.0, r.x, r.y, r.w, r.h, [r.w / 2.0; 4]);
+        let i = 0.5 * s;
+        c.fill_rounded(fill, 1.0, r.x + i, r.y + i, r.w - 2.0 * i, r.h - 2.0 * i, [r.w / 2.0 - i; 4]);
     }
 }
 
@@ -730,6 +782,13 @@ mod tests {
         let l = bar_layout(&[1], 900.0, TRAFFIC_LIGHTS, 0.0);
         assert!(l.tabs[0].1.x >= TRAFFIC_LIGHTS);
         assert_eq!(l.hit(20.0, 20.0), Hit::Bar);
+        // Drawn buttons sit in that room, left of the first tab; the bar around them still drags.
+        let l = l.with_lights();
+        assert_eq!(l.hit(20.0, 20.0), Hit::Light(Light::Close));
+        assert_eq!(l.hit(40.0, 20.0), Hit::Light(Light::Minimise));
+        assert_eq!(l.hit(60.0, 20.0), Hit::Light(Light::FullScreen));
+        assert!(l.lights.iter().all(|(_, r)| r.x + r.w < l.tabs[0].1.x));
+        assert_eq!(l.hit(20.0, 37.0), Hit::Bar);
     }
 
     #[test]

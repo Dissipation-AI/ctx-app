@@ -183,6 +183,11 @@ impl History {
         }
     }
 
+    /// Drop every cached line (the tab is no longer shown; they are fetched again if needed).
+    pub fn forget(&mut self) {
+        self.lines = BTreeMap::new();
+    }
+
     /// Keep the cache bounded, dropping lines far from `around`.
     pub fn trim(&mut self, around: u64) {
         while self.lines.len() > HISTORY_CACHE_LINES {
