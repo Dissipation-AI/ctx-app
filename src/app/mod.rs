@@ -1135,7 +1135,7 @@ impl App {
     /// prompt once its shell is ready (the + menu's starters).
     pub fn new_tab_with(&mut self, w: u64, folder: Option<String>, command: Option<String>) {
         let folder = folder.or_else(|| self.focused_tab(w).and_then(|t| self.tab_info(t)).map(|t| t.folder.clone()));
-        let r = Request::OpenTab { window: Some(WindowRef::Number(w)), folder, name: None };
+        let r = Request::OpenTab { window: Some(WindowRef::Number(w)), folder, name: None, agent: None };
         self.request("ctx open tab", r, move |app, r| match r {
             Response::Ok(Output::Opened(o)) => {
                 if let Some(t) = o.tab {
@@ -1622,6 +1622,7 @@ mod tests {
             rows: 24,
             shell_integration: true,
             permissions_of: None,
+            owner: None,
             remote_host: None,
         }
     }
