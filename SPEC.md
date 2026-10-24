@@ -218,6 +218,16 @@ always go to the program, as in Terminal.app.
 - Signed with Developer ID, hardened runtime, notarized. No App Sandbox (it must talk to the
   server's socket and launch it), but no entitlements beyond what that needs.
 
+### Later: adding an agent (not scheduled, noted 2026-10-24)
+
+Adding an agent takes a few clicks in CTX, never System Settings. "New agent…" asks for a name
+and its folders, then, behind one admin password prompt, creates a macOS account for it (hidden,
+standard, random password), installs the ctx helper if needed, gives the account its folders, and
+writes `[agents.<name>]` with `account =` to config.toml. The new agent's first tab offers to log
+its tools in (`claude setup-token`). Removing the agent undoes all of it, asking first about the
+account's home folder. Doing this by hand on 2026-10-23 took System Settings, `chmod 700 ~`, ACLs
+on the shared folders, `sudo scripts/install-helper.sh`, a config edit and a login per account.
+
 ## Configuration
 
 `~/.config/ctx/config.toml`, `[app]` section. Reloaded on change.

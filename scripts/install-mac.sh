@@ -2,7 +2,8 @@
 # Build CTX.app, remove the installed one completely, and install the new build, so every run
 # starts from a clean slate, including macOS privacy (TCC) permissions: the prompts come back.
 #
-#   scripts/install-mac.sh                 build (release), uninstall, reset TCC, install, launch
+#   scripts/install-mac.sh                 build (release), uninstall, reset TCC, install, launch,
+#                                          reinstall ctx's Claude Code plugin if you use it
 #   scripts/install-mac.sh --debug         a debug build
 #   scripts/install-mac.sh --keep-tcc      leave privacy permissions as they are
 #   scripts/install-mac.sh --keep-server   don't stop the running ctx server (keeps your tabs)
@@ -30,7 +31,7 @@ while [ $# -gt 0 ]; do
         --uninstall) install=0 ;;
         --dest) dest=$2; shift ;;
         --yes|-y) yes=1 ;;
-        -h|--help) sed -n 2,15p "$0"; exit 0 ;;
+        -h|--help) sed -n 2,16p "$0"; exit 0 ;;
         *) echo "install-mac: unknown option $1" >&2; exit 2 ;;
     esac
     shift
@@ -137,3 +138,12 @@ codesign --verify --deep --strict "$dest/CTX.app"
 step "Launching"
 open "$dest/CTX.app"
 echo "Installed $dest/CTX.app. It registers the ctx server and offers the command-line tools on first run."
+
+# 7. Claude Code keeps a copy of ctx's plugin per version, so a changed plugin only reaches new
+#    sessions after a reinstall.
+if grep -q '"ctx@ctx"' "$HOME/.claude/plugins/installed_plugins.json" 2> /dev/null; then
+    step "Reinstalling ctx's Claude Code plugin"
+    ctx_bin=$dest/CTX.app/Contents/Resources/bin/ctx
+    for _ in $(seq 100); do "$ctx_bin" status > /dev/null 2>&1 && break; sleep 0.1; done
+    "$ctx_bin" remove hooks for claude && "$ctx_bin" install hooks for claude
+fi
