@@ -66,3 +66,9 @@ pub fn start_server() {
 pub fn first_run_then(then: impl FnOnce() + 'static) {
     then();
 }
+
+/// `CTX --start-server`: start the server without opening a window.
+pub fn start_server_main() -> i32 {
+    start_server();
+    0
+}

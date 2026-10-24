@@ -60,48 +60,79 @@ pub fn ctx_program() -> Option<PathBuf> {
     None
 }
 
-/// This copy of the app, as the bundled `ctx`'s size and modification time: a reinstalled app is
-/// another copy even at the same path.
+/// This copy of the app: its path, then the bundled `ctx`'s size and modification time (a
+/// reinstalled app is another copy even at the same path).
 fn build_id() -> Option<String> {
     let m = std::fs::metadata(bundled("ctx")?).ok()?;
     let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
-    Some(format!("{} {}", m.len(), t.as_nanos()))
+    Some(format!("{}\n{} {}", bundle()?.display(), m.len(), t.as_nanos()))
 }
 
-/// Where the app notes which copy of itself registered the server.
+/// Where the app notes which copy of itself registered the server. The `ctx` command reads the
+/// first line to start the server through this app rather than registering one of its own.
 fn registered_file() -> PathBuf {
     crate::client::paths().data.join("server-registration")
 }
 
+/// launchd has the server's job loaded (after a login, or a registration in this session).
+fn loaded() -> bool {
+    let uid = unsafe { libc::getuid() };
+    std::process::Command::new("/bin/launchctl")
+        .args(["print", &format!("gui/{uid}/{LABEL}")])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+fn agent_service() -> objc2::rc::Retained<objc2_service_management::SMAppService> {
+    unsafe { objc2_service_management::SMAppService::agentServiceWithPlistName(&NSString::from_str(AGENT_PLIST)) }
+}
+
+fn cli_plist() -> PathBuf {
+    PathBuf::from(crate::client::home()).join("Library/LaunchAgents").join(format!("{LABEL}.plist"))
+}
+
+fn server_answers() -> bool {
+    std::os::unix::net::UnixStream::connect(crate::client::paths().socket()).is_ok()
+}
+
 fn register_agent() -> Result<(), String> {
-    use objc2_service_management::{SMAppService, SMAppServiceStatus};
-    let service = unsafe { SMAppService::agentServiceWithPlistName(&NSString::from_str(AGENT_PLIST)) };
-    let status = unsafe { service.status() };
-    let cli_plist = PathBuf::from(crate::client::home()).join("Library/LaunchAgents").join(format!("{LABEL}.plist"));
-    let build = build_id();
+    use objc2_service_management::SMAppServiceStatus;
+    let status = unsafe { agent_service().status() };
     let registered = std::fs::read_to_string(registered_file()).ok();
-    if status == SMAppServiceStatus::Enabled && !cli_plist.exists() && build.is_some() && registered == build {
+    if status == SMAppServiceStatus::Enabled
+        && !cli_plist().exists()
+        && build_id().is_some()
+        && registered == build_id()
+        && loaded()
+    {
         return Ok(());
     }
     // A registration from another copy of the app still says "enabled" after a reinstall, but
-    // launchd can't find its program, so the server doesn't start at login; one the command line
+    // launchd can't start its program, so the server doesn't start at login; one the command line
     // made has the same label, and macOS refuses one of the two at login. Replacing either stops
     // the server it started, ending every tab's shell, so a running server is left alone until
     // the app next starts without one.
-    if std::os::unix::net::UnixStream::connect(crate::client::paths().socket()).is_ok() {
+    if server_answers() {
         return Ok(());
     }
-    if cli_plist.exists() {
+    reregister()
+}
+
+/// Replace whatever registration the server has with this app's.
+fn reregister() -> Result<(), String> {
+    use objc2_service_management::{SMAppService, SMAppServiceStatus};
+    if cli_plist().exists() {
         let uid = unsafe { libc::getuid() };
         let _ = std::process::Command::new("/bin/launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output();
-        let _ = std::fs::remove_file(&cli_plist);
+        let _ = std::fs::remove_file(cli_plist());
     }
-    if status == SMAppServiceStatus::Enabled {
+    let service = agent_service();
+    if unsafe { service.status() } == SMAppServiceStatus::Enabled {
         let _ = unsafe { service.unregisterAndReturnError() };
     }
     match unsafe { service.registerAndReturnError() } {
         Ok(()) => {
-            if let Some(b) = build {
+            if let Some(b) = build_id() {
                 let _ = std::fs::create_dir_all(crate::client::paths().data);
                 let _ = std::fs::write(registered_file(), b);
             }
@@ -118,15 +149,93 @@ fn register_agent() -> Result<(), String> {
     }
 }
 
+/// Ask launchd to start the server and wait until it answers.
+fn kickstart() -> Result<(), String> {
+    let uid = unsafe { libc::getuid() };
+    let k = std::process::Command::new("/bin/launchctl").args(["kickstart", &format!("gui/{uid}/{LABEL}")]).output();
+    match k {
+        Ok(o) if !o.status.success() => {
+            return Err(format!(
+                "launchd couldn't start the ctx server: {}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            ));
+        }
+        Err(e) => return Err(format!("Couldn't run launchctl: {e}")),
+        Ok(_) => {}
+    }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < until {
+        if server_answers() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err(format!(
+        "The ctx server didn't start. Its log is {}.",
+        crate::client::paths().data.join("server.log").display()
+    ))
+}
+
+/// Holds the registration to this process (the app and `CTX --start-server` can both be starting
+/// the server, and one replacing the registration stops the server the other just started).
+struct Lock {
+    _file: std::fs::File,
+}
+
+impl Lock {
+    fn take(wait: bool) -> Option<Lock> {
+        let data = crate::client::paths().data;
+        let _ = std::fs::create_dir_all(&data);
+        let f = std::fs::File::create(data.join("server-registration.lock")).ok()?;
+        let op = if wait { libc::LOCK_EX } else { libc::LOCK_EX | libc::LOCK_NB };
+        // SAFETY: flock on a file descriptor we own; the lock goes with the file.
+        (unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&f), op) } == 0).then_some(Lock { _file: f })
+    }
+}
+
+/// Register the server from this app (if it isn't) and start it. A registration can be stale even
+/// when it's new: macOS keeps its record of an earlier copy of an app without a Team ID (signed ad
+/// hoc), launchd refuses to start that (exit 78), and macOS replaces the record only when a second
+/// start fails. So a server that doesn't come up is started once more, then registered again.
+fn launch() -> Result<(), String> {
+    let _lock = Lock::take(true);
+    register_agent()?;
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(40);
+    loop {
+        if server_answers() || kickstart().is_ok() || kickstart().is_ok() {
+            return Ok(());
+        }
+        if std::time::Instant::now() > until {
+            return kickstart();
+        }
+        reregister()?;
+    }
+}
+
+/// `CTX --start-server`: register the server from this app and start it, without opening a
+/// window. The `ctx` command runs this when it finds no server, so the server keeps one
+/// registration (the app's) whichever of the two starts it.
+pub fn start_server_main() -> i32 {
+    if bundle().is_none() {
+        eprintln!("CTX isn't running from its app bundle, so it can't register the ctx server.");
+        return 1;
+    }
+    match launch() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
 /// Start the server: launchd runs it (never this app's child: it would inherit our identity).
 pub fn start_server() {
     if ctx_protocol::config::Paths::is_custom() {
         return;
     }
-    if bundle().is_some() && register_agent().is_ok() {
-        let uid = unsafe { libc::getuid() };
-        let _ =
-            std::process::Command::new("/bin/launchctl").args(["kickstart", &format!("gui/{uid}/{LABEL}")]).output();
+    if bundle().is_some() {
+        let _ = launch();
         return;
     }
     // Not bundled (a development build): the ctx command registers and starts it.
@@ -174,7 +283,10 @@ fn install_tools(tools: &[(&str, PathBuf)]) -> Result<String, String> {
 pub fn first_run_then(then: impl FnOnce() + 'static) {
     // A test or trial setup (CTX_HOME) never touches launchd or your PATH.
     if bundle().is_some() && !ctx_protocol::config::Paths::is_custom() {
-        if let Err(e) = register_agent() {
+        // Unless another process is registering it right now.
+        if let Some(_lock) = Lock::take(false)
+            && let Err(e) = register_agent()
+        {
             super::alert("The ctx server isn't allowed to run yet", &e);
         }
         let set_up = super::super::with_app(|a| a.state.set_up).unwrap_or(true);
