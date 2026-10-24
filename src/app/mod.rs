@@ -405,7 +405,7 @@ pub fn launched() {
         loaded,
         config_path: paths.config.clone(),
         themes_dir,
-        list: TabList { windows: Vec::new() },
+        list: TabList { windows: Vec::new(), caller: None },
         wins: BTreeMap::new(),
         views: HashMap::new(),
         state,
