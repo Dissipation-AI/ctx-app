@@ -203,6 +203,16 @@ define_class!(
             });
         }
 
+        #[unsafe(method(setWindowTheme:))]
+        fn set_window_theme(&self, sender: &NSMenuItem) {
+            let name = sender.representedObject().and_then(|o| o.downcast::<NSString>().ok()).map(|s| s.to_string());
+            later(move |a| {
+                if let Some(w) = a.key_window() {
+                    a.set_window_theme(w, name);
+                }
+            });
+        }
+
         #[unsafe(method(setTheme:))]
         fn set_theme(&self, sender: &NSMenuItem) {
             let name = sender.representedObject().and_then(|o| o.downcast::<NSString>().ok()).map(|s| s.to_string());
@@ -756,11 +766,13 @@ pub fn build_menus(app: &App) -> Vec<Action> {
         }
         if title == "View" {
             menu.addItem(&NSMenuItem::separatorItem(mtm));
-            let themes = NSMenuItem::new(mtm);
-            themes.setTitle(&NSString::from_str("Tab Theme"));
-            let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Tab Theme"));
-            themes.setSubmenu(Some(&sub));
-            menu.addItem(&themes);
+            for name in ["Tab Theme", "Window Theme"] {
+                let themes = NSMenuItem::new(mtm);
+                themes.setTitle(&NSString::from_str(name));
+                let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(name));
+                themes.setSubmenu(Some(&sub));
+                menu.addItem(&themes);
+            }
         }
         top.setSubmenu(Some(&menu));
         main.addItem(&top);
@@ -825,6 +837,24 @@ pub fn rebuild_window_menu(app: &App) {
         for name in crate::theme::available(&app.themes_dir) {
             let title = if name == "system" { "System (Basic, light or dark)".to_string() } else { name.clone() };
             let item = menu_item(&title, sel!(setTheme:), "", 0);
+            unsafe { item.setRepresentedObject(Some(&NSString::from_str(&name))) };
+            item.setState(if name == current { NSControlStateValueOn } else { NSControlStateValueOff });
+            sub.addItem(&item);
+        }
+    }
+    // Window Theme submenu, with the key window's theme checked.
+    if let Some(vm) = main.itemWithTitle(&NSString::from_str("View")).and_then(|i| i.submenu())
+        && let Some(sub) = vm.itemWithTitle(&NSString::from_str("Window Theme")).and_then(|i| i.submenu())
+    {
+        sub.removeAllItems();
+        let current = app
+            .key_window()
+            .and_then(|w| app.wins.get(&w))
+            .and_then(|w| w.theme_name.clone())
+            .unwrap_or_else(|| app.loaded.app.theme.clone());
+        for name in crate::theme::available(&app.themes_dir) {
+            let title = if name == "system" { "System (Basic, light or dark)".to_string() } else { name.clone() };
+            let item = menu_item(&title, sel!(setWindowTheme:), "", 0);
             unsafe { item.setRepresentedObject(Some(&NSString::from_str(&name))) };
             item.setState(if name == current { NSControlStateValueOn } else { NSControlStateValueOff });
             sub.addItem(&item);
