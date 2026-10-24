@@ -213,8 +213,14 @@ always go to the program, as in Terminal.app.
 - On first launch, registers the `ctx` server as a LaunchAgent via `SMAppService.agent` (the
   bundle carries `ctx`, `ctx-launch` and `bro`) and installs the `ctx` and `bro` command-line
   tools (symlinks into `/usr/local/bin` when writable, else `~/.local/bin`, with consent). When the
-  command line registered the server earlier, the app's registration replaces it; the command line
-  then only starts it. A trial or test setup (`CTX_HOME`) never touches launchd or PATH.
+  command line registered the server earlier, the app's registration replaces it (once no server
+  is running); from then on the command line starts the server through the app
+  (`CTX --start-server`, which registers and starts it without a window). An app signed ad hoc
+  (no Team ID) has a stale registration after each rebuild: macOS keeps its record of the old copy
+  and launchd refuses it (exit 78) until a retry fails about 10 seconds later and macOS replaces the
+  record, so a server that doesn't come up is registered again (about 13 seconds the first time
+  after a reinstall). The app notes which copy registered it in `<data>/server-registration`:
+  the bundle's path, then the bundled `ctx`'s size and modification time. A trial or test setup (`CTX_HOME`) never touches launchd or PATH.
 - Signed with Developer ID, hardened runtime, notarized. No App Sandbox (it must talk to the
   server's socket and launch it), but no entitlements beyond what that needs.
 
