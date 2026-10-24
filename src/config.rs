@@ -12,6 +12,14 @@ pub struct AppConfig {
     /// The default theme for tabs: a built-in (`ghostty`, the default), `system` (Terminal.app's
     /// Basic, following macOS light/dark) or a theme file name. Each tab can choose its own.
     pub theme: String,
+    /// The theme each new window starts with: a theme name, `random` (a different one for each
+    /// window, from `random_themes`), or empty for `theme`.
+    pub new_window_theme: String,
+    /// The theme each new tab (or pane) starts with, as `new_window_theme`. It's the tab's own, so
+    /// it wins over its window's.
+    pub new_tab_theme: String,
+    /// What `random` chooses from (empty: the dark built-in themes).
+    pub random_themes: Vec<String>,
     pub left_option_is_meta: bool,
     pub right_option_is_meta: bool,
     pub confirm_multiline_paste: bool,
@@ -34,6 +42,9 @@ impl Default for AppConfig {
             font: "SF Mono".into(),
             font_size: 13.0,
             theme: "ghostty".into(),
+            new_window_theme: String::new(),
+            new_tab_theme: String::new(),
+            random_themes: Vec::new(),
             left_option_is_meta: true,
             right_option_is_meta: false,
             confirm_multiline_paste: true,
@@ -67,6 +78,15 @@ impl AppConfig {
             return Err("[app] font_size must be between 6 and 72".into());
         }
         Ok(c)
+    }
+
+    /// What `random` picks from.
+    pub fn random_pool(&self) -> Vec<String> {
+        if self.random_themes.is_empty() {
+            crate::theme::RANDOM_POOL.iter().map(|s| s.to_string()).collect()
+        } else {
+            self.random_themes.clone()
+        }
     }
 
     pub fn cursor_shape(&self) -> CursorShape {
@@ -121,8 +141,11 @@ pub fn load(path: &std::path::Path) -> Loaded {
 pub const EXAMPLE: &str = r#"[app]
 font = "SF Mono"
 font_size = 13
-theme = "ghostty"           # ghostty, midnight, forest, plum, ember, ocean, graphite, basic, basic-dark,
+theme = "ghostty"           # ghostty, jet, midnight, forest, plum, ember, ocean, graphite, basic, basic-dark,
                             # system (Basic, following macOS light/dark), or a theme file name
+new_window_theme = ""       # each new window's theme: a name, "random" (a different one each time), or "" for theme
+new_tab_theme = ""          # the same for each new tab or pane (a tab's theme wins over its window's)
+random_themes = []          # what "random" picks from; [] for the dark built-ins
 left_option_is_meta = true
 right_option_is_meta = false
 confirm_multiline_paste = true
@@ -159,6 +182,10 @@ mod tests {
         assert_eq!(l.app.keys.get("new_tab").map(String::as_str), Some("cmd-shift-t"));
         assert!(parse("[app]\ncursor = \"triangle\"").problem.is_some());
         assert!(parse("[app]\none_line_tabs = true").app.one_line_tabs);
+        let l = parse("[app]\nnew_window_theme = \"random\"\nrandom_themes = [\"jet\", \"plum\"]\n");
+        assert_eq!(l.problem, None);
+        assert_eq!(l.app.new_window_theme, "random");
+        assert_eq!(l.app.random_themes, vec!["jet".to_string(), "plum".to_string()]);
         assert!(parse("[app]\nfontsize = 3").problem.is_some());
         // A broken file still gives usable defaults.
         assert_eq!(parse("[app]\nfont_size = 400").app, AppConfig::default());

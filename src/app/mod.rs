@@ -339,6 +339,8 @@ pub struct App {
     callbacks: HashMap<u64, Box<dyn FnOnce(&mut App, Response)>>,
     subscribed: Vec<u64>,
     known_windows: BTreeSet<u64>,
+    /// Tabs in the last list, to tell which are new (for `new_tab_theme`).
+    known_tabs: BTreeSet<u64>,
     first_list: bool,
     /// Windows the app asked for (shown when they appear).
     want_shown: BTreeSet<u64>,
@@ -417,6 +419,7 @@ pub fn launched() {
         callbacks: HashMap::new(),
         subscribed: Vec::new(),
         known_windows: BTreeSet::new(),
+        known_tabs: BTreeSet::new(),
         first_list: true,
         want_shown: BTreeSet::new(),
         drop_at: None,
@@ -854,6 +857,14 @@ impl App {
         let tabs: Vec<u64> = self.list.windows.iter().flat_map(|w| w.tabs.iter().map(|t| t.number)).collect();
         // Which windows to show.
         let mut show: Vec<u64> = Vec::new();
+        // Windows and tabs that appeared since the last list (none at launch: they existed).
+        let mut new_windows: Vec<u64> = Vec::new();
+        let new_tabs: Vec<u64> = if self.first_list {
+            Vec::new()
+        } else {
+            tabs.iter().copied().filter(|t| !self.known_tabs.contains(t)).collect()
+        };
+        self.known_tabs = tabs.iter().copied().collect();
         if self.first_list {
             self.first_list = false;
             let saved: Vec<u64> = self.state.windows.keys().copied().filter(|w| windows.contains(w)).collect();
@@ -870,6 +881,7 @@ impl App {
         } else {
             for w in &self.list.windows {
                 if !self.known_windows.contains(&w.number) {
+                    new_windows.push(w.number);
                     let ours = self.want_shown.remove(&w.number);
                     let dropped = self.drop_at.is_some_and(|(t, _, _)| w.tabs.iter().any(|x| x.number == t));
                     if ours || dropped || !self.is_agent_window(w) {
@@ -882,6 +894,7 @@ impl App {
         for w in show {
             self.open_win(w);
         }
+        self.theme_new(&new_windows, &new_tabs);
         if !self.wins.is_empty() && !self.selftest_started && std::env::var_os("CTX_APP_SELFTEST").is_some() {
             self.selftest_started = true;
             plat::after(1500, Box::new(selftest::start));
@@ -1295,6 +1308,70 @@ impl App {
             .cloned()
             .or_else(|| self.window_of(tab).and_then(|w| self.wins.get(&w)).and_then(|w| w.theme_name.clone()));
         self.theme(name.as_deref())
+    }
+
+    /// The name of the theme a tab is drawn in (as `tab_theme`).
+    fn tab_theme_name(&self, tab: u64) -> String {
+        self.state
+            .tab_themes
+            .get(&tab)
+            .cloned()
+            .or_else(|| self.window_of(tab).and_then(|w| self.wins.get(&w)).and_then(|w| w.theme_name.clone()))
+            .unwrap_or_else(|| self.loaded.app.theme.clone())
+    }
+
+    /// The theme for something new, from a `new_window_theme` / `new_tab_theme` setting: `None`
+    /// for the usual one, a different one each time for `random`.
+    fn new_theme(&self, setting: &str, in_use: &[String]) -> Option<String> {
+        match setting {
+            "" => None,
+            "random" => {
+                use std::hash::{BuildHasher, Hasher};
+                let seed = std::collections::hash_map::RandomState::new().build_hasher().finish();
+                theme::pick(&self.loaded.app.random_pool(), in_use, seed)
+            }
+            name => Some(name.to_string()),
+        }
+    }
+
+    /// Give new windows and tabs the themes the config asks for.
+    fn theme_new(&mut self, windows: &[u64], tabs: &[u64]) {
+        let setting = self.loaded.app.new_window_theme.clone();
+        for w in windows {
+            if !self.wins.contains_key(w) {
+                continue;
+            }
+            let in_use: Vec<String> = self
+                .wins
+                .iter()
+                .filter(|(n, _)| *n != w)
+                .map(|(_, x)| x.theme_name.clone().unwrap_or_else(|| self.loaded.app.theme.clone()))
+                .collect();
+            if let Some(name) = self.new_theme(&setting, &in_use) {
+                self.wins.get_mut(w).unwrap().theme_name = Some(name);
+                self.dirty_win(*w);
+            }
+        }
+        let setting = self.loaded.app.new_tab_theme.clone();
+        for t in tabs {
+            if self.state.tab_themes.contains_key(t) {
+                continue;
+            }
+            let in_use: Vec<String> = self
+                .list
+                .windows
+                .iter()
+                .flat_map(|w| w.tabs.iter().map(|x| x.number))
+                .filter(|x| x != t)
+                .map(|x| self.tab_theme_name(x))
+                .collect();
+            if let Some(name) = self.new_theme(&setting, &in_use) {
+                self.state.tab_themes.insert(*t, name);
+                if let Some(w) = self.window_of(*t) {
+                    self.dirty_win(w);
+                }
+            }
+        }
     }
 
     pub fn layout_all(&mut self) {

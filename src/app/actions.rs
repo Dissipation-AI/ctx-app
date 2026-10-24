@@ -280,6 +280,17 @@ impl App {
         self.redraw_dirty();
     }
 
+    /// Give a window its own theme, for the tabs in it without one (`None`: back to the default).
+    pub fn set_window_theme(&mut self, w: u64, name: Option<String>) {
+        let Some(win) = self.wins.get_mut(&w) else { return };
+        win.theme_name = name.filter(|n| *n != self.loaded.app.theme);
+        self.dirty_win(w);
+        self.update_subscriptions();
+        self.save_state();
+        plat::rebuild_window_menu(self);
+        self.redraw_dirty();
+    }
+
     /// macOS switched light/dark.
     pub fn appearance_changed(&mut self, dark: bool) {
         if dark == self.system_dark {
