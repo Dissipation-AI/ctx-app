@@ -367,6 +367,11 @@ What the viewer needs from the model, added to `ctx-protocol` and the server:
 - Screen updates carry `password_input`: the program in front is reading a password.
 - Activity entries carry `typed_hidden`: text was typed but kept out of the log.
 
+## Protocol versions 5 and 6
+
+- 5 (agents): `OpenTab` takes the agent a tab is for; each tab carries its `owner`.
+- 6: the tab list carries `caller`, the agent asking, so an agent's hook reuses only its own tabs.
+
 ## Acceptance tests
 
 Results (2026-10-11, M4 Pro, macOS 27, release build) are in the README.

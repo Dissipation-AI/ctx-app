@@ -60,22 +60,53 @@ pub fn ctx_program() -> Option<PathBuf> {
     None
 }
 
+/// This copy of the app, as the bundled `ctx`'s size and modification time: a reinstalled app is
+/// another copy even at the same path.
+fn build_id() -> Option<String> {
+    let m = std::fs::metadata(bundled("ctx")?).ok()?;
+    let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(format!("{} {}", m.len(), t.as_nanos()))
+}
+
+/// Where the app notes which copy of itself registered the server.
+fn registered_file() -> PathBuf {
+    crate::client::paths().data.join("server-registration")
+}
+
 fn register_agent() -> Result<(), String> {
     use objc2_service_management::{SMAppService, SMAppServiceStatus};
     let service = unsafe { SMAppService::agentServiceWithPlistName(&NSString::from_str(AGENT_PLIST)) };
     let status = unsafe { service.status() };
-    if status == SMAppServiceStatus::Enabled {
+    let cli_plist = PathBuf::from(crate::client::home()).join("Library/LaunchAgents").join(format!("{LABEL}.plist"));
+    let build = build_id();
+    let registered = std::fs::read_to_string(registered_file()).ok();
+    if status == SMAppServiceStatus::Enabled && !cli_plist.exists() && build.is_some() && registered == build {
         return Ok(());
     }
-    // Replace a registration the command line made (it points at another copy of ctx).
-    let cli_plist = PathBuf::from(crate::client::home()).join("Library/LaunchAgents").join(format!("{LABEL}.plist"));
+    // A registration from another copy of the app still says "enabled" after a reinstall, but
+    // launchd can't find its program, so the server doesn't start at login; one the command line
+    // made has the same label, and macOS refuses one of the two at login. Replacing either stops
+    // the server it started, ending every tab's shell, so a running server is left alone until
+    // the app next starts without one.
+    if std::os::unix::net::UnixStream::connect(crate::client::paths().socket()).is_ok() {
+        return Ok(());
+    }
     if cli_plist.exists() {
         let uid = unsafe { libc::getuid() };
         let _ = std::process::Command::new("/bin/launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output();
         let _ = std::fs::remove_file(&cli_plist);
     }
+    if status == SMAppServiceStatus::Enabled {
+        let _ = unsafe { service.unregisterAndReturnError() };
+    }
     match unsafe { service.registerAndReturnError() } {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            if let Some(b) = build {
+                let _ = std::fs::create_dir_all(crate::client::paths().data);
+                let _ = std::fs::write(registered_file(), b);
+            }
+            Ok(())
+        }
         Err(e) => {
             if unsafe { service.status() } == SMAppServiceStatus::RequiresApproval {
                 unsafe { SMAppService::openSystemSettingsLoginItems() };
