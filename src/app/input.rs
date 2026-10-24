@@ -490,7 +490,7 @@ impl App {
             }
             if press.dragging {
                 // Along the bar the tab follows the pointer; away from it, it stays put.
-                press.x = if y < chrome::BAR_H + 20.0 {
+                press.x = if y < win.bar.height + 20.0 {
                     x
                 } else {
                     win.bar.tabs.get(press.index).map(|(_, r)| r.x + r.w / 2.0).unwrap_or(x)
@@ -775,7 +775,7 @@ impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn scroll_event(&mut self, w: u64, x: f64, y: f64, dx: f64, dy: f64, precise: bool, flags: u64) {
         let hit = self.chrome_hit(w, x, y);
-        if y < chrome::BAR_H {
+        if y < chrome::bar_height(self.loaded.app.one_line_tabs) {
             // Over the tab bar: scroll the tabs sideways.
             let d = if dx.abs() > dy.abs() { -dx } else { -dy };
             self.scroll_bar(w, d * if precise { 1.0 } else { 40.0 });
@@ -1107,7 +1107,7 @@ impl App {
         let target = plat::window_at(self, sx, sy);
         if let Some((w, lx, ly)) = target {
             // On a tab bar: reorder, or move to that window at that place.
-            if ly < chrome::BAR_H {
+            if ly < chrome::bar_height(self.loaded.app.one_line_tabs) {
                 let Some(win) = self.wins.get(&w) else { return };
                 let mut at = win.bar.insertion(lx);
                 if w == from && at > index {
@@ -1173,7 +1173,7 @@ impl App {
             let mut hint = None;
             if let Some((w, lx, ly)) = target
                 && w == win.number
-                && ly >= chrome::BAR_H
+                && ly >= win.bar.height
                 && let Some((_, r)) = win.tile_rects.iter().find(|(_, r)| r.contains(lx, ly))
                 && let Some(edge) = layout::drop_edge(*r, lx, ly)
             {

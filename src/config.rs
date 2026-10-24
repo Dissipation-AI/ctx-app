@@ -21,6 +21,9 @@ pub struct AppConfig {
     /// macOS: tabs share the title bar with the window's buttons (off: a normal title bar, the
     /// tabs under it).
     pub tabs_in_titlebar: bool,
+    /// Each tab shows "name — folder" on one line, in a tab bar as short as macOS's own title bar
+    /// (off: the name over the folder, in a taller bar).
+    pub one_line_tabs: bool,
     /// Shortcut overrides: action name → keys, e.g. `new_tab = "cmd-t"`.
     pub keys: BTreeMap<String, String>,
 }
@@ -37,6 +40,7 @@ impl Default for AppConfig {
             cursor: "block".into(),
             cursor_blink: false,
             tabs_in_titlebar: true,
+            one_line_tabs: false,
             keys: BTreeMap::new(),
         }
     }
@@ -125,6 +129,7 @@ confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
 tabs_in_titlebar = true     # macOS: tabs share the title bar with the window's buttons
+one_line_tabs = false       # true: "name — folder" on one line, in a bar as short as a title bar
 
 # [app.keys]
 # new_tab = "cmd-t"
@@ -153,6 +158,7 @@ mod tests {
         assert_eq!(l.app.cursor_shape(), CursorShape::Bar);
         assert_eq!(l.app.keys.get("new_tab").map(String::as_str), Some("cmd-shift-t"));
         assert!(parse("[app]\ncursor = \"triangle\"").problem.is_some());
+        assert!(parse("[app]\none_line_tabs = true").app.one_line_tabs);
         assert!(parse("[app]\nfontsize = 3").problem.is_some());
         // A broken file still gives usable defaults.
         assert_eq!(parse("[app]\nfont_size = 400").app, AppConfig::default());
