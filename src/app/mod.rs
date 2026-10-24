@@ -340,6 +340,9 @@ pub struct App {
     subscribed: Vec<u64>,
     known_windows: BTreeSet<u64>,
     first_list: bool,
+    /// New windows (`false`) and tabs (`true`) the system's services asked for before the app was
+    /// connected: opened once the first tab list arrives.
+    service_opens: Vec<bool>,
     /// Windows the app asked for (shown when they appear).
     want_shown: BTreeSet<u64>,
     /// A tab dropped outside every window: where its new window goes.
@@ -418,6 +421,7 @@ pub fn launched() {
         subscribed: Vec::new(),
         known_windows: BTreeSet::new(),
         first_list: true,
+        service_opens: Vec::new(),
         want_shown: BTreeSet::new(),
         drop_at: None,
         blink_on: true,
@@ -854,6 +858,8 @@ impl App {
         let tabs: Vec<u64> = self.list.windows.iter().flat_map(|w| w.tabs.iter().map(|t| t.number)).collect();
         // Which windows to show.
         let mut show: Vec<u64> = Vec::new();
+        // At launch, a window opened because there was nothing to show.
+        let mut opened_one = false;
         if self.first_list {
             self.first_list = false;
             let saved: Vec<u64> = self.state.windows.keys().copied().filter(|w| windows.contains(w)).collect();
@@ -864,6 +870,7 @@ impl App {
             }
             if show.is_empty() {
                 self.new_window(None);
+                opened_one = true;
             }
             self.known_windows = windows.iter().copied().collect();
             self.maybe_offer_reopen();
@@ -881,6 +888,14 @@ impl App {
         }
         for w in show {
             self.open_win(w);
+        }
+        // Services that launched the app (or came before it connected); a new window is the one
+        // just opened, if there is one.
+        for tab in std::mem::take(&mut self.service_opens) {
+            if !tab && std::mem::take(&mut opened_one) {
+                continue;
+            }
+            self.open_for_service(tab);
         }
         if !self.wins.is_empty() && !self.selftest_started && std::env::var_os("CTX_APP_SELFTEST").is_some() {
             self.selftest_started = true;
@@ -1116,6 +1131,19 @@ impl App {
             Response::Error(e) => app.error(&e.message),
             _ => {}
         });
+    }
+
+    /// The New CTX Window / New CTX Tab services: a new window, or a tab in the front window (a
+    /// window if there's none). Before the app is connected, they wait for the first tab list.
+    pub fn open_for_service(&mut self, tab: bool) {
+        if self.client.is_none() || self.first_list {
+            self.service_opens.push(tab);
+            return;
+        }
+        match self.key_window().or_else(|| self.wins.keys().next().copied()) {
+            Some(w) if tab => self.new_tab(w),
+            _ => self.new_window(None),
+        }
     }
 
     fn pending_select(&mut self, w: u64, tab: u64) {

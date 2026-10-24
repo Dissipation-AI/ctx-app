@@ -124,6 +124,10 @@ pub fn run() {
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let d = AppDelegate::new(mtm);
     app.setDelegate(Some(ProtocolObject::from_ref(&*d)));
+    // The delegate answers the New CTX Window / New CTX Tab services (Info.plist's NSServices),
+    // set before the run loop so one that launched the app is answered too.
+    let provider: &AnyObject = &d;
+    unsafe { app.setServicesProvider(Some(provider)) };
     DELEGATE.with(|x| *x.borrow_mut() = Some(d));
     app.run();
 }
@@ -182,6 +186,18 @@ define_class!(
     }
 
     impl AppDelegate {
+        /// The "New CTX Window" service, from any app (System Settings can give it a shortcut).
+        #[unsafe(method(newWindow:userData:error:))]
+        fn service_new_window(&self, _pboard: Option<&AnyObject>, _data: Option<&AnyObject>, _error: *mut *mut AnyObject) {
+            later(|a| a.open_for_service(false));
+        }
+
+        /// The "New CTX Tab" service: a tab in the front window (a window if there's none).
+        #[unsafe(method(newTab:userData:error:))]
+        fn service_new_tab(&self, _pboard: Option<&AnyObject>, _data: Option<&AnyObject>, _error: *mut *mut AnyObject) {
+            later(|a| a.open_for_service(true));
+        }
+
         #[unsafe(method(menuAction:))]
         fn menu_action(&self, sender: &NSMenuItem) {
             let i = sender.tag() as usize;
