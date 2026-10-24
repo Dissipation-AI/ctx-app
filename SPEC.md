@@ -35,11 +35,14 @@ pixels from the same code, and only the window, input and font plumbing differ (
   window's title bar is see-through and covered by the tab bar, and the system's buttons (SwiftUI
   views, ~3 MB) are never created (a borderless window cost ~130 MB in WindowServer; see
   [docs/memory.md](docs/memory.md)); on Linux the window is undecorated. The app draws the red/yellow/green
-  buttons as three circles (grey when the window isn't focused, still there in full screen, ⌥-click
-  on green zooms), and on Linux the window resizes from a band along its edges. Tabs sit next to
+  buttons as three circles the size, spacing and colours of the system's own (measured on macOS 26:
+  14 pt across, 23 pt apart, 9 pt from the left; grey when the window isn't focused, still there in
+  full screen, ⌥-click on green zooms), and on Linux the window resizes from a band along its edges. Tabs sit next to
   those buttons, notebook style, rounded on top, with the selected tab flowing into the terminal
   below it. Each tab has two lines: its label in a large, uniform font on top, its folder smaller
-  and dimmer underneath, and a status dot (idle, busy, agent working, agent waiting for you; agents
+  and dimmer underneath. With `one_line_tabs = true` it's one line, "label — folder", with the
+  folder dimmer and left out when it's the label, and the bar is 32 pt, macOS's own title bar
+  height, instead of 40. Each tab also has a status dot (idle, busy, agent working, agent waiting for you; agents
   are recognised by program name: claude, codex, gemini, aider, …). When tabs don't fit, the bar
   scrolls, with chevrons at the ends. At the right end are buttons for **+**, **History** and
   **Activity**. All of it is drawn in the window's own pixel buffer: no native controls.
@@ -249,6 +252,7 @@ confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
 tabs_in_titlebar = true     # false: a plain title bar with the tabs below it
+one_line_tabs = false       # true: "name — folder" on one line, in a bar as short as a title bar
 ```
 
 Themes: Ghostty's default colours by default. Built in: `ghostty`, `system` (Terminal.app's Basic
