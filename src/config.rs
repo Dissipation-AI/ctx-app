@@ -32,6 +32,13 @@ pub struct AppConfig {
     /// Each tab shows "name — folder" on one line, in a tab bar as short as macOS's own title bar
     /// (off: the name over the folder, in a taller bar).
     pub one_line_tabs: bool,
+    /// What a click on the tab bar's + does: `menu` (the menu of choices), or one of its choices
+    /// at once: `new_tab`, `new_window`, `reopen_tab`, or `top_starter` (the first "Start a tab
+    /// with…" choice, else a new tab). A right-click always shows the menu.
+    pub plus_button: String,
+    /// Show each tab's close button all the time, not only under the pointer, so the title
+    /// doesn't move when it appears.
+    pub always_show_tab_close: bool,
     /// Shortcut overrides: action name → keys, e.g. `new_tab = "cmd-t"`.
     pub keys: BTreeMap<String, String>,
 }
@@ -52,6 +59,8 @@ impl Default for AppConfig {
             cursor_blink: false,
             tabs_in_titlebar: true,
             one_line_tabs: false,
+            plus_button: "menu".into(),
+            always_show_tab_close: false,
             keys: BTreeMap::new(),
         }
     }
@@ -68,11 +77,17 @@ pub struct Loaded {
     pub problem: Option<String>,
 }
 
+/// What `plus_button` can be.
+pub const PLUS_BUTTON: &[&str] = &["menu", "new_tab", "new_window", "reopen_tab", "top_starter"];
+
 impl AppConfig {
     pub fn from_table(t: &toml::Table) -> Result<AppConfig, String> {
         let c: AppConfig = toml::Value::Table(t.clone()).try_into().map_err(|e: toml::de::Error| e.to_string())?;
         if !["block", "bar", "underline"].contains(&c.cursor.as_str()) {
             return Err("[app] cursor must be \"block\", \"bar\" or \"underline\"".into());
+        }
+        if !PLUS_BUTTON.contains(&c.plus_button.as_str()) {
+            return Err(format!("[app] plus_button must be one of {}", PLUS_BUTTON.join(", ")));
         }
         if !(6.0..=72.0).contains(&c.font_size) {
             return Err("[app] font_size must be between 6 and 72".into());
@@ -153,6 +168,8 @@ cursor = "block"            # block | bar | underline
 cursor_blink = false
 tabs_in_titlebar = true     # macOS: tabs share the title bar with the window's buttons
 one_line_tabs = false       # true: "name — folder" on one line, in a bar as short as a title bar
+plus_button = "menu"        # the + in the tab bar: menu, new_tab, new_window, reopen_tab or top_starter
+always_show_tab_close = false   # true: every tab shows its close button, so titles don't shift on hover
 
 # [app.keys]
 # new_tab = "cmd-t"
@@ -186,6 +203,11 @@ mod tests {
         assert_eq!(l.problem, None);
         assert_eq!(l.app.new_window_theme, "random");
         assert_eq!(l.app.random_themes, vec!["jet".to_string(), "plum".to_string()]);
+        let l = parse("[app]\nplus_button = \"new_window\"\nalways_show_tab_close = true\n");
+        assert_eq!(l.problem, None);
+        assert_eq!(l.app.plus_button, "new_window");
+        assert!(l.app.always_show_tab_close);
+        assert!(parse("[app]\nplus_button = \"dance\"").problem.is_some());
         assert!(parse("[app]\nfontsize = 3").problem.is_some());
         // A broken file still gives usable defaults.
         assert_eq!(parse("[app]\nfont_size = 400").app, AppConfig::default());

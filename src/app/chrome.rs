@@ -281,6 +281,8 @@ pub struct BarFrame<'a> {
     pub dragging: Option<(usize, f64)>,
     pub active: bool,
     pub width: f64,
+    /// Every tab shows its close button, not only the one under the pointer.
+    pub always_close: bool,
 }
 
 fn px(r: Rect, s: f64) -> Rect {
@@ -327,6 +329,7 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
             s,
             f.active,
             f.layout.one_line,
+            f.always_close,
         );
         // A thin separator between plain unselected neighbours.
         let next = f.items.get(i + 1);
@@ -421,6 +424,7 @@ fn draw_tab<C: Canvas>(
     s: f64,
     active: bool,
     one_line: bool,
+    always_close: bool,
 ) {
     let rad = 8.0 * s;
     let (x, w) = if item.selected { (r.x, r.w) } else { (r.x + 1.0 * s, r.w - 2.0 * s) };
@@ -446,8 +450,9 @@ fn draw_tab<C: Canvas>(
     }
     let mut left = x + 12.0 * s;
     let mut right = x + w - 10.0 * s;
-    // Close button on hover, at the left as in Terminal.app.
-    if hover {
+    // Close button on hover, at the left as in Terminal.app; on every tab with
+    // `always_show_tab_close`, fainter away from the pointer, so titles never move.
+    if hover || always_close {
         let cr = Rect::new(x + 6.0 * s, top + (h - 16.0 * s) / 2.0, 16.0 * s, 16.0 * s);
         if close_hover {
             c.fill_rounded(col.hover, 1.0, cr.x, cr.y, cr.w, cr.h, [4.0 * s; 4]);
@@ -459,7 +464,8 @@ fn draw_tab<C: Canvas>(
             PathOp::Move(cx + a, cy - a),
             PathOp::Line(cx - a, cy + a),
         ];
-        c.stroke(&path, 1.4 * s, col.dim, 1.0);
+        let ink = if hover { col.dim } else { mix(col.dim, under, 0.35) };
+        c.stroke(&path, 1.4 * s, ink, 1.0);
         left = cr.x + cr.w + 6.0 * s;
     }
     let lf = if item.selected { &fonts.label_bold } else { &fonts.label };
