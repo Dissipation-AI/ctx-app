@@ -35,7 +35,7 @@ pixels from the same code, and only the window, input and font plumbing differ (
   window's title bar is see-through and covered by the tab bar, and the system's buttons (SwiftUI
   views, ~3 MB) are never created (a borderless window cost ~130 MB in WindowServer; see
   [docs/memory.md](docs/memory.md)); on Linux the window is undecorated. The app draws the red/yellow/green
-  buttons as three circles the size and spacing of the system's own (measured on macOS 26:
+  buttons as three circles the size, spacing and colours of the system's own (measured on macOS 26:
   14 pt across, 23 pt apart, 9 pt from the left; grey when the window isn't focused, still there in
   full screen, ⌥-click on green zooms), and on Linux the window resizes from a band along its edges. Tabs sit next to
   those buttons, notebook style, rounded on top, with the selected tab flowing into the terminal
