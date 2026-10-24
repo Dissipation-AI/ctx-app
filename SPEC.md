@@ -46,7 +46,13 @@ pixels from the same code, and only the window, input and font plumbing differ (
 - **+ (new tab) menu:** besides a plain new tab, it offers *starters* the server works out from
   history: the first commands people ran in tabs, with their folder ("+ jupyter lab in
   ~/code/nb", "+ npm run dev in ~/code/site"). Choosing one opens a tab in that folder with the
-  command typed at the prompt but **not run**.
+  command typed at the prompt but **not run**. The menu also has New Window and Reopen Closed
+  Tab. `plus_button` can make a click on + do one of these at once instead (`new_tab`,
+  `new_window`, `reopen_tab`, or `top_starter`, the first starter, else a new tab); a right-click
+  on + always shows the menu.
+- **Close buttons:** a tab's × shows at its left under the pointer. With
+  `always_show_tab_close = true` every tab shows it (fainter away from the pointer), so a title
+  never shifts when the pointer passes over it.
 - **Per-tab themes:** a tab's context menu has a theme picker with swatches. The tinted built-in
   themes (`midnight`, `forest`, `plum`, `ember`, `ocean`, `graphite`) have backgrounds that are
   easy to tell apart, and the tab carries its colour in the bar.
@@ -243,6 +249,8 @@ confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
 tabs_in_titlebar = true     # false: a plain title bar with the tabs below it
+plus_button = "menu"        # the + in the tab bar: menu, new_tab, new_window, reopen_tab or top_starter
+always_show_tab_close = false   # true: every tab shows its close button, so titles don't shift on hover
 ```
 
 Themes: Ghostty's default colours by default. Built in: `ghostty`, `system` (Terminal.app's Basic

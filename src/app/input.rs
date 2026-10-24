@@ -11,6 +11,7 @@ use crate::layout::{self, Edge, Rect};
 use crate::model::{self, History, Place, ViewPos};
 use crate::render;
 use crate::selection::{self, Point, Selection, Unit};
+use crate::shortcuts::Action;
 use ctx_protocol::*;
 use std::time::Instant;
 
@@ -300,11 +301,13 @@ impl App {
                     self.close_tab(tab, false);
                     return;
                 }
+                // The close button counts when it's showing: always, or under the pointer.
                 if close
-                    && self
-                        .wins
-                        .get(&w)
-                        .is_some_and(|win| matches!(win.hover, Some(Hit::Tab { index: i, .. }) if i == index))
+                    && (self.loaded.app.always_show_tab_close
+                        || self
+                            .wins
+                            .get(&w)
+                            .is_some_and(|win| matches!(win.hover, Some(Hit::Tab { index: i, .. }) if i == index)))
                 {
                     self.close_tab(tab, false);
                     return;
@@ -334,7 +337,21 @@ impl App {
                 return;
             }
             Hit::Plus => {
-                self.plus_menu(w, x, y);
+                // A click does what `plus_button` says; a right-click always shows the menu.
+                let choice = if button == 2 { "menu".to_string() } else { self.loaded.app.plus_button.clone() };
+                match choice.as_str() {
+                    "new_tab" => self.new_tab(w),
+                    "new_window" => self.perform(Action::NewWindow),
+                    "reopen_tab" => self.perform(Action::ReopenTab),
+                    "top_starter" => {
+                        self.refresh_starters();
+                        match self.starters.first().cloned() {
+                            Some(s) => self.new_tab_with(w, Some(s.folder), Some(s.command)),
+                            None => self.new_tab(w),
+                        }
+                    }
+                    _ => self.plus_menu(w, x, y),
+                }
                 return;
             }
             Hit::Light(l) => {

@@ -331,6 +331,7 @@ impl App {
             .map(|t| (t, self.tab_theme(t).background))
             .collect();
         let default_bg = self.theme(None).background;
+        let always_close = self.loaded.app.always_show_tab_close;
         let win = self.wins.get_mut(&w).unwrap();
         let find = win.find.clone();
         let find_focused = win.focus == Focus::Find && key;
@@ -354,6 +355,7 @@ impl App {
                     dragging: drag,
                     active: key,
                     width: cw,
+                    always_close,
                 };
                 chrome::draw_bar(c, &frame, &fonts, &col, scale);
                 let mut strip_y = chrome::BAR_H;
