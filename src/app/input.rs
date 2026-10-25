@@ -22,6 +22,19 @@ pub enum Cursor {
     Text,
     Pointer,
     Grab,
+    /// Over a divider between tiles side by side, or one above the other.
+    ResizeColumns,
+    ResizeRows,
+}
+
+/// How far from a divider between tiles (points) a press takes the divider.
+const DIVIDER_SLOP: f64 = 3.0;
+
+fn divider_cursor(split: Option<crate::layout::Split>) -> Cursor {
+    match split {
+        Some(crate::layout::Split::Rows) => Cursor::ResizeRows,
+        _ => Cursor::ResizeColumns,
+    }
 }
 
 impl App {
@@ -438,7 +451,7 @@ impl App {
         // Dividers between tiles.
         if let Some(win) = self.wins.get_mut(&w)
             && let Some(t) = &win.tiles
-            && let Some(path) = t.divider_at(win.term_rect, x, y, 3.0)
+            && let Some(path) = t.divider_at(win.term_rect, x, y, DIVIDER_SLOP)
         {
             win.dragging_divider = Some(path);
             return;
@@ -478,6 +491,13 @@ impl App {
             _ => Unit::Character,
         };
         let pt = Point { place, column: col };
+        // One selection in a window: starting one clears the other tiles'.
+        let others: Vec<u64> = self.wins[&w].tile_rects.iter().map(|x| x.0).filter(|t| *t != tab).collect();
+        for t in others {
+            if let Some(v) = self.views.get_mut(&t) {
+                v.selection = None;
+            }
+        }
         if let Some(v) = self.views.get_mut(&tab) {
             if flags & keys::SHIFT != 0
                 && let Some(sel) = v.selection.as_mut()
@@ -533,6 +553,7 @@ impl App {
             return;
         }
         if let Some(path) = win.dragging_divider.clone() {
+            plat::set_cursor(divider_cursor(win.tiles.as_ref().and_then(|t| t.split_at(&path))));
             let area = win.term_rect;
             if let Some(t) = win.tiles.as_mut() {
                 t.drag_divider(&path, area, x, y);
@@ -713,6 +734,18 @@ impl App {
                 win.dirty = Some(Dirty::All);
             }
             self.redraw_dirty();
+            return;
+        }
+        // A divider between tiles: a press there moves it rather than selecting, so it says so.
+        let win = self.wins.get_mut(&w).unwrap();
+        if let Some(t) = &win.tiles
+            && let Some(path) = t.divider_at(win.term_rect, x, y, DIVIDER_SLOP)
+        {
+            plat::set_cursor(divider_cursor(t.split_at(&path)));
+            if win.hover_link.take().is_some() {
+                win.dirty = Some(Dirty::All);
+                self.redraw_dirty();
+            }
             return;
         }
         // ⌘ (Ctrl on Linux) over a link underlines it.

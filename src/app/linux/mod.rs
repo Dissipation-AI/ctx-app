@@ -495,6 +495,8 @@ pub fn set_cursor(c: Cursor) {
         Cursor::Text => CursorIcon::Text,
         Cursor::Pointer => CursorIcon::Pointer,
         Cursor::Grab => CursorIcon::Grabbing,
+        Cursor::ResizeColumns => CursorIcon::ColResize,
+        Cursor::ResizeRows => CursorIcon::RowResize,
     };
     // Called from inside the app (which is borrowed): reach the windows through our own list.
     // The pointer shape only shows over the window it's in.

@@ -116,6 +116,11 @@ fn find_row(app: &App, tab: u64, exact: &str) -> Option<usize> {
     v.drawn.iter().position(|p| *p == Place::Screen(y as u16))
 }
 
+/// The tabs shown side by side in a window.
+fn tiles(app: &App, w: u64) -> Vec<u64> {
+    app.wins.get(&w).map(|w| w.tile_rects.iter().map(|x| x.0).collect()).unwrap_or_default()
+}
+
 fn tab_count(app: &App, w: u64) -> usize {
     app.window_info(w).map(|i| i.tabs.len()).unwrap_or(0)
 }
@@ -235,6 +240,50 @@ pub fn start() {
             .map(|w| w.tile_rects.iter().filter_map(|(t, _)| app.tab_info(*t).map(|i| i.columns)).collect())
             .unwrap_or_default();
         r.check(sizes.len() == 2 && sizes.iter().all(|c| *c < 200), "each tile resized its tab");
+        // Some text in the tile without the `seq` output, to select in each.
+        let other = tiles(app, r.window).into_iter().find(|t| find_row(app, *t, "400").is_none());
+        if let Some(t) = other
+            && let Some((x, y)) = cell_point(app, r.window, t, 0, 0)
+        {
+            click_at(app, r.window, x, y, 1, 1);
+            type_text(app, r.window, "printf 'right-%s\\n' a b c d e");
+            enter(app, r.window);
+        }
+    }));
+    steps.push_back(Box::new(|app, r| {
+        // Drag-select in each of two side-by-side tiles: the selection is in the tile dragged in
+        // only (starting one clears the other's), grows with the pointer, and copies what was
+        // dragged over.
+        let ts = tiles(app, r.window);
+        for (first, last) in [("398", "400"), ("right-a", "right-c")] {
+            let Some(t) = ts.iter().copied().find(|t| find_row(app, *t, first).is_some()) else {
+                r.check(false, &format!("a tile shows {first}"));
+                continue;
+            };
+            let (a, b) = (find_row(app, t, first).unwrap_or(0), find_row(app, t, last).unwrap_or(0));
+            let mut steady = true;
+            if let Some((x, y)) = cell_point(app, r.window, t, 0, a) {
+                app.mouse_down(r.window, x, y, 1, 0, 1);
+            }
+            for (col, row) in [(1, a), (3, a), (2, a + 1), (5, a + 1), (1, b), (last.len() - 1, b)] {
+                let Some((x, y)) = cell_point(app, r.window, t, col, row) else { continue };
+                app.mouse_dragged(r.window, x, y, 0, 1);
+                let here = app.views.get(&t).and_then(|v| v.selection);
+                let elsewhere = ts.iter().any(|o| *o != t && app.views.get(o).is_some_and(|v| v.selection.is_some()));
+                let drawn = app.views.get(&t).and_then(|v| v.drawn.get(row).copied());
+                steady &= !elsewhere
+                    && here
+                        .is_some_and(|s| s.anchor.column == 0 && s.head.column == col && Some(s.head.place) == drawn);
+            }
+            if let Some((x, y)) = cell_point(app, r.window, t, last.len() - 1, b) {
+                app.mouse_up(r.window, x, y, 0, 1);
+            }
+            r.check(steady, &format!("dragging in the tile with {first} selects in that tile only, under the pointer"));
+            app.copy(r.window);
+            let want = format!("{first}\n{}\n{last}", if first == "398" { "399" } else { "right-b" });
+            let got = plat::get_clipboard().unwrap_or_default();
+            r.check(got == want, &format!("and copies what it covers ({got:?})"));
+        }
         if let Some(t) = app.wins.get(&r.window).and_then(|w| w.tile_rects.first().map(|x| x.0)) {
             r.tab = t;
         }

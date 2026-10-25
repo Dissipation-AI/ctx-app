@@ -179,6 +179,16 @@ impl Node {
         }
     }
 
+    /// Which way the divider at `path` (from `divider_at`) divides.
+    pub fn split_at(&self, path: &[bool]) -> Option<Split> {
+        match (self, path.split_first()) {
+            (Node::Split { split, .. }, None) => Some(*split),
+            (Node::Split { first, .. }, Some((true, rest))) => first.split_at(rest),
+            (Node::Split { second, .. }, Some((false, rest))) => second.split_at(rest),
+            _ => None,
+        }
+    }
+
     /// Move the divider found by `divider_at` to a point.
     pub fn drag_divider(&mut self, path: &[bool], area: Rect, px: f64, py: f64) {
         if let Node::Split { split, ratio, first, second } = self {
@@ -283,6 +293,7 @@ mod tests {
         n.insert(1, 2, Edge::Left);
         let path = n.divider_at(area(), 400.5, 10.0, 3.0).unwrap();
         assert!(path.is_empty());
+        assert_eq!(n.split_at(&path), Some(Split::Columns));
         n.drag_divider(&path, area(), 200.0, 10.0);
         let rects = n.rects(area());
         assert_eq!(rects[0].0, 2);

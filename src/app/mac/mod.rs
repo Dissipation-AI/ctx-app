@@ -375,6 +375,11 @@ pub fn set_cursor(c: Cursor) {
         Cursor::Text => NSCursor::IBeamCursor().set(),
         Cursor::Pointer => NSCursor::pointingHandCursor().set(),
         Cursor::Grab => NSCursor::closedHandCursor().set(),
+        // The newer column/row resize cursors need macOS 15.
+        #[allow(deprecated)]
+        Cursor::ResizeColumns => NSCursor::resizeLeftRightCursor().set(),
+        #[allow(deprecated)]
+        Cursor::ResizeRows => NSCursor::resizeUpDownCursor().set(),
     }
 }
 
