@@ -89,9 +89,11 @@ pub enum Light {
 }
 
 const LIGHTS: [Light; 3] = [Light::Close, Light::Minimise, Light::FullScreen];
-const LIGHT_D: f64 = 12.0;
-const LIGHT_X: f64 = 14.0;
-const LIGHT_STEP: f64 = 20.0;
+// The system's own, measured from AppKit's buttons on macOS 26: 14 pt circles, 9 pt from the
+// left edge, 23 pt apart, centred in the bar (9 pt from the top of a 32 pt title bar).
+const LIGHT_D: f64 = 14.0;
+const LIGHT_X: f64 = 9.0;
+const LIGHT_STEP: f64 = 23.0;
 
 /// Where the pointer is.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -261,6 +263,8 @@ pub struct BarFrame<'a> {
     pub dragging: Option<(usize, f64)>,
     pub active: bool,
     pub width: f64,
+    /// Every tab shows its close button, not only the one under the pointer.
+    pub always_close: bool,
 }
 
 fn px(r: Rect, s: f64) -> Rect {
@@ -306,6 +310,7 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
             col,
             s,
             f.active,
+            f.always_close,
         );
         // A thin separator between plain unselected neighbours.
         let next = f.items.get(i + 1);
@@ -366,18 +371,21 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
 /// The red/yellow/green buttons: plain circles, grey while the window isn't focused.
 fn draw_lights<C: Canvas>(c: &mut C, f: &BarFrame, col: &Colors, s: f64) {
     for (l, r) in &f.layout.lights {
-        let fill: Rgb = if !f.active {
-            mix(col.bar, col.text, 0.2)
+        // Fill and rim as the system draws them on macOS 26, in sRGB (sampled from a screenshot
+        // of a native window). Unfocused, they're grey from the bar's colours, to suit every theme.
+        let (fill, rim): (Rgb, Rgb) = if !f.active {
+            let fill = mix(col.bar, col.text, 0.2);
+            (fill, mix(fill, [0, 0, 0], 0.12))
         } else {
             match l {
-                Light::Close => [0xff, 0x5f, 0x57],
-                Light::Minimise => [0xfe, 0xbc, 0x2e],
-                Light::FullScreen => [0x28, 0xc8, 0x40],
+                Light::Close => ([0xf2, 0x7e, 0x78], [0xe5, 0x45, 0x37]),
+                Light::Minimise => ([0xf5, 0xd2, 0x55], [0xea, 0xbb, 0x00]),
+                Light::FullScreen => ([0x75, 0xcb, 0x79], [0x30, 0xb3, 0x3b]),
             }
         };
         let r = px(*r, s);
-        // A faint darker rim, as the system draws.
-        c.fill_rounded(mix(fill, [0, 0, 0], 0.12), 1.0, r.x, r.y, r.w, r.h, [r.w / 2.0; 4]);
+        // A thin rim (half a point), as the system draws.
+        c.fill_rounded(rim, 1.0, r.x, r.y, r.w, r.h, [r.w / 2.0; 4]);
         let i = 0.5 * s;
         c.fill_rounded(fill, 1.0, r.x + i, r.y + i, r.w - 2.0 * i, r.h - 2.0 * i, [r.w / 2.0 - i; 4]);
     }
@@ -395,6 +403,7 @@ fn draw_tab<C: Canvas>(
     col: &Colors,
     s: f64,
     active: bool,
+    always_close: bool,
 ) {
     let rad = 8.0 * s;
     let (x, w) = if item.selected { (r.x, r.w) } else { (r.x + 1.0 * s, r.w - 2.0 * s) };
@@ -420,8 +429,9 @@ fn draw_tab<C: Canvas>(
     }
     let mut left = x + 12.0 * s;
     let mut right = x + w - 10.0 * s;
-    // Close button on hover, at the left as in Terminal.app.
-    if hover {
+    // Close button on hover, at the left as in Terminal.app; on every tab with
+    // `always_show_tab_close`, fainter away from the pointer, so titles never move.
+    if hover || always_close {
         let cr = Rect::new(x + 6.0 * s, top + (h - 16.0 * s) / 2.0, 16.0 * s, 16.0 * s);
         if close_hover {
             c.fill_rounded(col.hover, 1.0, cr.x, cr.y, cr.w, cr.h, [4.0 * s; 4]);
@@ -433,7 +443,8 @@ fn draw_tab<C: Canvas>(
             PathOp::Move(cx + a, cy - a),
             PathOp::Line(cx - a, cy + a),
         ];
-        c.stroke(&path, 1.4 * s, col.dim, 1.0);
+        let ink = if hover { col.dim } else { mix(col.dim, under, 0.35) };
+        c.stroke(&path, 1.4 * s, ink, 1.0);
         left = cr.x + cr.w + 6.0 * s;
     }
     let lf = if item.selected { &fonts.label_bold } else { &fonts.label };
@@ -792,6 +803,15 @@ mod tests {
         assert_eq!(l.hit(60.0, 20.0), Hit::Light(Light::FullScreen));
         assert!(l.lights.iter().all(|(_, r)| r.x + r.w < l.tabs[0].1.x));
         assert_eq!(l.hit(20.0, 37.0), Hit::Bar);
+    }
+
+    #[test]
+    fn window_buttons_at_the_systems_size_and_spacing() {
+        let l = bar_layout(&[1, 2], 900.0, TRAFFIC_LIGHTS, 0.0).with_lights();
+        // AppKit's on macOS 26: 14 pt circles, 9 pt from the left, 23 pt apart, centred in the bar.
+        let lights: Vec<(f64, f64, f64)> = l.lights.iter().map(|(_, r)| (r.x, r.y, r.w)).collect();
+        assert_eq!(lights, vec![(9.0, 13.0, 14.0), (32.0, 13.0, 14.0), (55.0, 13.0, 14.0)]);
+        assert_eq!(l.hit(16.0, 20.0), Hit::Light(Light::Close));
     }
 
     #[test]

@@ -124,6 +124,10 @@ pub fn run() {
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let d = AppDelegate::new(mtm);
     app.setDelegate(Some(ProtocolObject::from_ref(&*d)));
+    // The delegate answers the New CTX Window / New CTX Tab services (Info.plist's NSServices),
+    // set before the run loop so one that launched the app is answered too.
+    let provider: &AnyObject = &d;
+    unsafe { app.setServicesProvider(Some(provider)) };
     DELEGATE.with(|x| *x.borrow_mut() = Some(d));
     app.run();
 }
@@ -182,6 +186,18 @@ define_class!(
     }
 
     impl AppDelegate {
+        /// The "New CTX Window" service, from any app (System Settings can give it a shortcut).
+        #[unsafe(method(newWindow:userData:error:))]
+        fn service_new_window(&self, _pboard: Option<&AnyObject>, _data: Option<&AnyObject>, _error: *mut *mut AnyObject) {
+            later(|a| a.open_for_service(false));
+        }
+
+        /// The "New CTX Tab" service: a tab in the front window (a window if there's none).
+        #[unsafe(method(newTab:userData:error:))]
+        fn service_new_tab(&self, _pboard: Option<&AnyObject>, _data: Option<&AnyObject>, _error: *mut *mut AnyObject) {
+            later(|a| a.open_for_service(true));
+        }
+
         #[unsafe(method(menuAction:))]
         fn menu_action(&self, sender: &NSMenuItem) {
             let i = sender.tag() as usize;
@@ -199,6 +215,16 @@ define_class!(
                 a.open_win(w);
                 if let Some(win) = a.wins.get(&w) {
                     show_window(&win.views, true);
+                }
+            });
+        }
+
+        #[unsafe(method(setWindowTheme:))]
+        fn set_window_theme(&self, sender: &NSMenuItem) {
+            let name = sender.representedObject().and_then(|o| o.downcast::<NSString>().ok()).map(|s| s.to_string());
+            later(move |a| {
+                if let Some(w) = a.key_window() {
+                    a.set_window_theme(w, name);
                 }
             });
         }
@@ -349,6 +375,11 @@ pub fn set_cursor(c: Cursor) {
         Cursor::Text => NSCursor::IBeamCursor().set(),
         Cursor::Pointer => NSCursor::pointingHandCursor().set(),
         Cursor::Grab => NSCursor::closedHandCursor().set(),
+        // The newer column/row resize cursors need macOS 15.
+        #[allow(deprecated)]
+        Cursor::ResizeColumns => NSCursor::resizeLeftRightCursor().set(),
+        #[allow(deprecated)]
+        Cursor::ResizeRows => NSCursor::resizeUpDownCursor().set(),
     }
 }
 
@@ -756,11 +787,13 @@ pub fn build_menus(app: &App) -> Vec<Action> {
         }
         if title == "View" {
             menu.addItem(&NSMenuItem::separatorItem(mtm));
-            let themes = NSMenuItem::new(mtm);
-            themes.setTitle(&NSString::from_str("Tab Theme"));
-            let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Tab Theme"));
-            themes.setSubmenu(Some(&sub));
-            menu.addItem(&themes);
+            for name in ["Tab Theme", "Window Theme"] {
+                let themes = NSMenuItem::new(mtm);
+                themes.setTitle(&NSString::from_str(name));
+                let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(name));
+                themes.setSubmenu(Some(&sub));
+                menu.addItem(&themes);
+            }
         }
         top.setSubmenu(Some(&menu));
         main.addItem(&top);
@@ -830,6 +863,24 @@ pub fn rebuild_window_menu(app: &App) {
             sub.addItem(&item);
         }
     }
+    // Window Theme submenu, with the key window's theme checked.
+    if let Some(vm) = main.itemWithTitle(&NSString::from_str("View")).and_then(|i| i.submenu())
+        && let Some(sub) = vm.itemWithTitle(&NSString::from_str("Window Theme")).and_then(|i| i.submenu())
+    {
+        sub.removeAllItems();
+        let current = app
+            .key_window()
+            .and_then(|w| app.wins.get(&w))
+            .and_then(|w| w.theme_name.clone())
+            .unwrap_or_else(|| app.loaded.app.theme.clone());
+        for name in crate::theme::available(&app.themes_dir) {
+            let title = if name == "system" { "System (Basic, light or dark)".to_string() } else { name.clone() };
+            let item = menu_item(&title, sel!(setWindowTheme:), "", 0);
+            unsafe { item.setRepresentedObject(Some(&NSString::from_str(&name))) };
+            item.setState(if name == current { NSControlStateValueOn } else { NSControlStateValueOff });
+            sub.addItem(&item);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -839,6 +890,32 @@ pub fn rebuild_window_menu(app: &App) {
 pub struct ViewIvars {
     pub window: Cell<u64>,
     tracking: RefCell<Option<Retained<NSTrackingArea>>>,
+}
+
+/// The shortcuts System Settings gives CTX's services (Keyboard Shortcuts → Services), as key
+/// equivalent strings: (is it New CTX Tab, keys).
+fn service_shortcuts() -> Vec<(bool, String)> {
+    let Some(pbs) = NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(&NSString::from_str("pbs"))) else {
+        return Vec::new();
+    };
+    let Some(status) = pbs.dictionaryForKey(&NSString::from_str("NSServicesStatus")) else { return Vec::new() };
+    let mut v = Vec::new();
+    for (tab, name) in [
+        (false, "ai.dissipation.ctx - New CTX Window - newWindow"),
+        (true, "ai.dissipation.ctx - New CTX Tab - newTab"),
+    ] {
+        let keys = status
+            .objectForKey(&NSString::from_str(name))
+            .and_then(|o| o.downcast::<NSDictionary>().ok())
+            .and_then(|d| d.objectForKey(&*NSString::from_str("key_equivalent")))
+            .and_then(|k| k.downcast::<NSString>().ok())
+            .map(|k| k.to_string())
+            .unwrap_or_default();
+        if !keys.is_empty() {
+            v.push((tab, keys));
+        }
+    }
+    v
 }
 
 fn press_of(e: &NSEvent) -> Press {
@@ -917,6 +994,14 @@ define_class!(
         fn key_down(&self, e: &NSEvent) {
             let w = self.ivars().window.get();
             let p = press_of(e);
+            // A shortcut given to New CTX Window / New CTX Tab: the system only sees it in other
+            // apps, so here it would reach the shell. Do what it says instead.
+            if p.flags & (keys::CONTROL | keys::OPTION | keys::COMMAND) != 0
+                && let Some((tab, _)) = service_shortcuts().into_iter().find(|(_, k)| keys::is_key_equivalent(k, &p))
+            {
+                later(move |a| a.open_for_service(tab));
+                return;
+            }
             if p.flags & keys::COMMAND != 0 {
                 // A ⌘ shortcut the menus didn't take: not for the program.
                 return;

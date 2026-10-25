@@ -85,6 +85,37 @@ pub fn ghostty() -> Theme {
     }
 }
 
+/// Jet black: a pure black background with bright, saturated colours (Ghostty's "12-bit Rainbow"
+/// palette).
+pub fn jet() -> Theme {
+    Theme {
+        name: "jet".into(),
+        ansi: [
+            [0x00, 0x00, 0x00],
+            [0xa0, 0x30, 0x50],
+            [0x40, 0xd0, 0x80],
+            [0xe0, 0x90, 0x40],
+            [0x30, 0x60, 0xb0],
+            [0x60, 0x30, 0x90],
+            [0x00, 0x90, 0xc0],
+            [0xdb, 0xde, 0xd8],
+            [0x68, 0x56, 0x56],
+            [0xc0, 0x60, 0x60],
+            [0x90, 0xd0, 0x50],
+            [0xe0, 0xd0, 0x00],
+            [0x00, 0xb0, 0xc0],
+            [0x80, 0x10, 0x70],
+            [0x20, 0xb0, 0xc0],
+            [0xff, 0xff, 0xff],
+        ],
+        foreground: [0xfe, 0xff, 0xff],
+        background: [0, 0, 0],
+        cursor: [0xe0, 0xd0, 0x00],
+        selection: [0x60, 0x60, 0x60],
+        dark: true,
+    }
+}
+
 /// Ghostty's palette on other backgrounds, distinct enough to tell tabs (and projects) apart at
 /// a glance: name, background, selection.
 const TINTS: &[(&str, [u8; 3], [u8; 3])] = &[
@@ -102,7 +133,20 @@ fn tinted(name: &str) -> Option<Theme> {
 }
 
 pub const BUILT_IN: &[&str] =
-    &["system", "ghostty", "midnight", "forest", "plum", "ember", "ocean", "graphite", "basic", "basic-dark"];
+    &["system", "ghostty", "jet", "midnight", "forest", "plum", "ember", "ocean", "graphite", "basic", "basic-dark"];
+
+/// What `new_window_theme = "random"` and `new_tab_theme = "random"` choose from when the config
+/// has no `random_themes`: the dark built-ins, which differ most by background.
+pub const RANDOM_POOL: &[&str] = &["ghostty", "jet", "midnight", "forest", "plum", "ember", "ocean", "graphite"];
+
+/// A theme for something new, from `pool`: one of those used least by what's open (`in_use`), so
+/// windows or tabs side by side differ; `seed` chooses among equals.
+pub fn pick(pool: &[String], in_use: &[String], seed: u64) -> Option<String> {
+    let uses = |n: &String| in_use.iter().filter(|u| *u == n).count();
+    let least = pool.iter().map(uses).min()?;
+    let fewest: Vec<&String> = pool.iter().filter(|n| uses(n) == least).collect();
+    Some(fewest[(seed % fewest.len() as u64) as usize].clone())
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -167,6 +211,7 @@ pub fn load(name: &str, themes_dir: &Path, system_dark: bool) -> Result<Theme, S
         "basic" => Ok(basic_light()),
         "basic-dark" => Ok(basic_dark()),
         "ghostty" => Ok(ghostty()),
+        "jet" => Ok(jet()),
         other if tinted(other).is_some() => Ok(tinted(other).unwrap()),
         other => {
             let path = themes_dir.join(format!("{other}.toml"));
@@ -219,7 +264,29 @@ mod tests {
         assert!(!load("system", dir, false).unwrap().dark);
         assert!(load("system", dir, true).unwrap().dark);
         assert_eq!(load("ghostty", dir, false).unwrap().name, "ghostty");
+        assert_eq!(load("jet", dir, false).unwrap().background, [0, 0, 0]);
+        for n in RANDOM_POOL {
+            assert!(load(n, dir, false).unwrap().dark, "{n}");
+        }
         assert!(load("missing", dir, false).is_err());
         assert_eq!(available(dir), BUILT_IN.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn random_picks_what_is_used_least() {
+        let pool: Vec<String> = ["jet", "forest", "plum"].iter().map(|s| s.to_string()).collect();
+        let used = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // Nothing open: any of them, chosen by the seed.
+        let all: std::collections::BTreeSet<String> = (0..30).filter_map(|s| pick(&pool, &[], s)).collect();
+        assert_eq!(all.len(), 3);
+        // Two in use: the third.
+        for seed in 0..10 {
+            assert_eq!(pick(&pool, &used(&["jet", "plum", "ghostty"]), seed).as_deref(), Some("forest"));
+        }
+        // All in use once, one twice: never the doubled one.
+        for seed in 0..10 {
+            assert_ne!(pick(&pool, &used(&["jet", "plum", "forest", "plum"]), seed).as_deref(), Some("plum"));
+        }
+        assert_eq!(pick(&[], &[], 1), None);
     }
 }

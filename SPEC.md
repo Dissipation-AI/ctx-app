@@ -35,8 +35,9 @@ pixels from the same code, and only the window, input and font plumbing differ (
   window's title bar is see-through and covered by the tab bar, and the system's buttons (SwiftUI
   views, ~3 MB) are never created (a borderless window cost ~130 MB in WindowServer; see
   [docs/memory.md](docs/memory.md)); on Linux the window is undecorated. The app draws the red/yellow/green
-  buttons as three circles (grey when the window isn't focused, still there in full screen, ⌥-click
-  on green zooms), and on Linux the window resizes from a band along its edges. Tabs sit next to
+  buttons as three circles the size, spacing and colours of the system's own (measured on macOS 26:
+  14 pt across, 23 pt apart, 9 pt from the left; grey when the window isn't focused, still there in
+  full screen, ⌥-click on green zooms), and on Linux the window resizes from a band along its edges. Tabs sit next to
   those buttons, notebook style, rounded on top, with the selected tab flowing into the terminal
   below it. Each tab has two lines: its label in a large, uniform font on top, its folder smaller
   and dimmer underneath, and a status dot (idle, busy, agent working, agent waiting for you; agents
@@ -46,7 +47,13 @@ pixels from the same code, and only the window, input and font plumbing differ (
 - **+ (new tab) menu:** besides a plain new tab, it offers *starters* the server works out from
   history: the first commands people ran in tabs, with their folder ("+ jupyter lab in
   ~/code/nb", "+ npm run dev in ~/code/site"). Choosing one opens a tab in that folder with the
-  command typed at the prompt but **not run**.
+  command typed at the prompt but **not run**. The menu also has New Window and Reopen Closed
+  Tab. `plus_button` can make a click on + do one of these at once instead (`new_tab`,
+  `new_window`, `reopen_tab`, or `top_starter`, the first starter, else a new tab); a right-click
+  on + always shows the menu.
+- **Close buttons:** a tab's × shows at its left under the pointer. With
+  `always_show_tab_close = true` every tab shows it (fainter away from the pointer), so a title
+  never shifts when the pointer passes over it.
 - **Per-tab themes:** a tab's context menu has a theme picker with swatches. The tinted built-in
   themes (`midnight`, `forest`, `plum`, `ember`, `ocean`, `graphite`) have backgrounds that are
   easy to tell apart, and the tab carries its colour in the bar.
@@ -243,17 +250,29 @@ on the shared folders, `sudo scripts/install-helper.sh`, a config edit and a log
 font = "SF Mono"
 font_size = 13
 theme = "ghostty"           # Ghostty's default colours; "system" follows macOS light/dark
+new_window_theme = ""       # each new window's theme: a name, "random", or "" for theme
+new_tab_theme = ""          # each new tab's (or pane's): a name, "random", or "" for its window's
+random_themes = []          # what "random" picks from; [] for the dark built-ins
 left_option_is_meta = true
 right_option_is_meta = false
 confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
 tabs_in_titlebar = true     # false: a plain title bar with the tabs below it
+plus_button = "menu"        # the + in the tab bar: menu, new_tab, new_window, reopen_tab or top_starter
+always_show_tab_close = false   # true: every tab shows its close button, so titles don't shift on hover
 ```
 
-Themes: Ghostty's default colours by default. Built in: `ghostty`, `system` (Terminal.app's Basic
-or Basic dark, following macOS), `basic`, `basic-dark`, and the tinted `midnight`, `forest`,
-`plum`, `ember`, `ocean`, `graphite`. A window's theme can be overridden per tab. Theme files live in `~/.config/ctx/themes/<name>.toml`:
+Themes: Ghostty's default colours by default. Built in: `ghostty`, `jet` (pure black, with bright,
+saturated colours: Ghostty's "12-bit Rainbow"), `system` (Terminal.app's Basic or Basic dark,
+following macOS), `basic`, `basic-dark`, and the tinted `midnight`, `forest`, `plum`, `ember`,
+`ocean`, `graphite`. Each window can have its own theme (View → Window Theme), and each tab its
+own (View → Tab Theme, or the tab's menu), which wins over its window's; a pane shown side by side
+is a tab, so it has its own too. `new_window_theme` and `new_tab_theme` give new windows and tabs a
+theme as they open: a name, or `random`, which picks the theme from `random_themes` (the dark
+built-ins by default) that the open windows or tabs use least, so each looks different from its
+neighbours. A new window that gets a theme this way keeps it for its first tab (that tab gets no
+`new_tab_theme` of its own). Windows and tabs that already exist when the app starts keep theirs. Theme files live in `~/.config/ctx/themes/<name>.toml`:
 
 ```toml
 palette = ["#000000", "#990000", …]   # 16 ANSI colours

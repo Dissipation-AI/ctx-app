@@ -12,6 +12,14 @@ pub struct AppConfig {
     /// The default theme for tabs: a built-in (`ghostty`, the default), `system` (Terminal.app's
     /// Basic, following macOS light/dark) or a theme file name. Each tab can choose its own.
     pub theme: String,
+    /// The theme each new window starts with: a theme name, `random` (a different one for each
+    /// window, from `random_themes`), or empty for `theme`.
+    pub new_window_theme: String,
+    /// The theme each new tab (or pane) starts with, as `new_window_theme`. It's the tab's own, so
+    /// it wins over its window's.
+    pub new_tab_theme: String,
+    /// What `random` chooses from (empty: the dark built-in themes).
+    pub random_themes: Vec<String>,
     pub left_option_is_meta: bool,
     pub right_option_is_meta: bool,
     pub confirm_multiline_paste: bool,
@@ -21,6 +29,13 @@ pub struct AppConfig {
     /// macOS: tabs share the title bar with the window's buttons (off: a normal title bar, the
     /// tabs under it).
     pub tabs_in_titlebar: bool,
+    /// What a click on the tab bar's + does: `menu` (the menu of choices), or one of its choices
+    /// at once: `new_tab`, `new_window`, `reopen_tab`, or `top_starter` (the first "Start a tab
+    /// with…" choice, else a new tab). A right-click always shows the menu.
+    pub plus_button: String,
+    /// Show each tab's close button all the time, not only under the pointer, so the title
+    /// doesn't move when it appears.
+    pub always_show_tab_close: bool,
     /// Shortcut overrides: action name → keys, e.g. `new_tab = "cmd-t"`.
     pub keys: BTreeMap<String, String>,
 }
@@ -31,12 +46,17 @@ impl Default for AppConfig {
             font: "SF Mono".into(),
             font_size: 13.0,
             theme: "ghostty".into(),
+            new_window_theme: String::new(),
+            new_tab_theme: String::new(),
+            random_themes: Vec::new(),
             left_option_is_meta: true,
             right_option_is_meta: false,
             confirm_multiline_paste: true,
             cursor: "block".into(),
             cursor_blink: false,
             tabs_in_titlebar: true,
+            plus_button: "menu".into(),
+            always_show_tab_close: false,
             keys: BTreeMap::new(),
         }
     }
@@ -53,16 +73,31 @@ pub struct Loaded {
     pub problem: Option<String>,
 }
 
+/// What `plus_button` can be.
+pub const PLUS_BUTTON: &[&str] = &["menu", "new_tab", "new_window", "reopen_tab", "top_starter"];
+
 impl AppConfig {
     pub fn from_table(t: &toml::Table) -> Result<AppConfig, String> {
         let c: AppConfig = toml::Value::Table(t.clone()).try_into().map_err(|e: toml::de::Error| e.to_string())?;
         if !["block", "bar", "underline"].contains(&c.cursor.as_str()) {
             return Err("[app] cursor must be \"block\", \"bar\" or \"underline\"".into());
         }
+        if !PLUS_BUTTON.contains(&c.plus_button.as_str()) {
+            return Err(format!("[app] plus_button must be one of {}", PLUS_BUTTON.join(", ")));
+        }
         if !(6.0..=72.0).contains(&c.font_size) {
             return Err("[app] font_size must be between 6 and 72".into());
         }
         Ok(c)
+    }
+
+    /// What `random` picks from.
+    pub fn random_pool(&self) -> Vec<String> {
+        if self.random_themes.is_empty() {
+            crate::theme::RANDOM_POOL.iter().map(|s| s.to_string()).collect()
+        } else {
+            self.random_themes.clone()
+        }
     }
 
     pub fn cursor_shape(&self) -> CursorShape {
@@ -117,14 +152,19 @@ pub fn load(path: &std::path::Path) -> Loaded {
 pub const EXAMPLE: &str = r#"[app]
 font = "SF Mono"
 font_size = 13
-theme = "ghostty"           # ghostty, midnight, forest, plum, ember, ocean, graphite, basic, basic-dark,
+theme = "ghostty"           # ghostty, jet, midnight, forest, plum, ember, ocean, graphite, basic, basic-dark,
                             # system (Basic, following macOS light/dark), or a theme file name
+new_window_theme = ""       # each new window's theme: a name, "random" (a different one each time), or "" for theme
+new_tab_theme = ""          # the same for each new tab or pane (a tab's theme wins over its window's)
+random_themes = []          # what "random" picks from; [] for the dark built-ins
 left_option_is_meta = true
 right_option_is_meta = false
 confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
 tabs_in_titlebar = true     # macOS: tabs share the title bar with the window's buttons
+plus_button = "menu"        # the + in the tab bar: menu, new_tab, new_window, reopen_tab or top_starter
+always_show_tab_close = false   # true: every tab shows its close button, so titles don't shift on hover
 
 # [app.keys]
 # new_tab = "cmd-t"
@@ -153,6 +193,15 @@ mod tests {
         assert_eq!(l.app.cursor_shape(), CursorShape::Bar);
         assert_eq!(l.app.keys.get("new_tab").map(String::as_str), Some("cmd-shift-t"));
         assert!(parse("[app]\ncursor = \"triangle\"").problem.is_some());
+        let l = parse("[app]\nnew_window_theme = \"random\"\nrandom_themes = [\"jet\", \"plum\"]\n");
+        assert_eq!(l.problem, None);
+        assert_eq!(l.app.new_window_theme, "random");
+        assert_eq!(l.app.random_themes, vec!["jet".to_string(), "plum".to_string()]);
+        let l = parse("[app]\nplus_button = \"new_window\"\nalways_show_tab_close = true\n");
+        assert_eq!(l.problem, None);
+        assert_eq!(l.app.plus_button, "new_window");
+        assert!(l.app.always_show_tab_close);
+        assert!(parse("[app]\nplus_button = \"dance\"").problem.is_some());
         assert!(parse("[app]\nfontsize = 3").problem.is_some());
         // A broken file still gives usable defaults.
         assert_eq!(parse("[app]\nfont_size = 400").app, AppConfig::default());

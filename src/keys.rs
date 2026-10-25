@@ -193,6 +193,29 @@ pub fn display(s: &str) -> String {
     out + &k
 }
 
+/// Whether `p` is the shortcut in a macOS key equivalent string, as System Settings stores a
+/// service's shortcut: modifier marks then the key, e.g. `^~t` for ⌃⌥T (`^` ⌃, `~` ⌥, `$` ⇧,
+/// `@` ⌘). The modifiers must match exactly.
+pub fn is_key_equivalent(equiv: &str, p: &Press) -> bool {
+    let mut want = 0;
+    let mut key = None;
+    for (i, c) in equiv.char_indices() {
+        match c {
+            '^' => want |= CONTROL,
+            '~' => want |= OPTION,
+            '$' => want |= SHIFT,
+            '@' => want |= COMMAND,
+            _ => {
+                key = Some(&equiv[i..]);
+                break;
+            }
+        }
+    }
+    let Some(key) = key.filter(|k| k.chars().count() == 1) else { return false };
+    let have = p.flags & (CONTROL | OPTION | SHIFT | COMMAND);
+    have == want && p.chars_ignoring.to_lowercase() == key.to_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +274,21 @@ mod tests {
         assert_eq!(parse_shortcut("hyper-x"), None);
         assert_eq!(display("cmd-shift-t"), "⇧⌘T");
         assert_eq!(display("ctrl-cmd-f"), "⌃⌘F");
+    }
+
+    #[test]
+    fn key_equivalents() {
+        let p =
+            |chars: &str, flags: u64| Press { keycode: 17, chars: String::new(), chars_ignoring: chars.into(), flags };
+        assert!(is_key_equivalent("^~t", &p("t", CONTROL | OPTION)));
+        assert!(is_key_equivalent("~^t", &p("t", CONTROL | OPTION)));
+        // Device bits (which Option key) don't matter; other modifiers do.
+        assert!(is_key_equivalent("^~t", &p("t", CONTROL | OPTION | LEFT_OPTION)));
+        assert!(!is_key_equivalent("^~t", &p("t", CONTROL)));
+        assert!(!is_key_equivalent("^~t", &p("t", CONTROL | OPTION | COMMAND)));
+        assert!(!is_key_equivalent("^~t", &p("y", CONTROL | OPTION)));
+        assert!(is_key_equivalent("@$t", &p("T", COMMAND | SHIFT)));
+        assert!(!is_key_equivalent("", &p("t", 0)));
+        assert!(!is_key_equivalent("^~", &p("t", CONTROL | OPTION)));
     }
 }

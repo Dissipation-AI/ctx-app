@@ -11,6 +11,7 @@ use crate::layout::{self, Edge, Rect};
 use crate::model::{self, History, Place, ViewPos};
 use crate::render;
 use crate::selection::{self, Point, Selection, Unit};
+use crate::shortcuts::Action;
 use ctx_protocol::*;
 use std::time::Instant;
 
@@ -21,6 +22,19 @@ pub enum Cursor {
     Text,
     Pointer,
     Grab,
+    /// Over a divider between tiles side by side, or one above the other.
+    ResizeColumns,
+    ResizeRows,
+}
+
+/// How far from a divider between tiles (points) a press takes the divider.
+const DIVIDER_SLOP: f64 = 3.0;
+
+fn divider_cursor(split: Option<crate::layout::Split>) -> Cursor {
+    match split {
+        Some(crate::layout::Split::Rows) => Cursor::ResizeRows,
+        _ => Cursor::ResizeColumns,
+    }
 }
 
 impl App {
@@ -300,11 +314,13 @@ impl App {
                     self.close_tab(tab, false);
                     return;
                 }
+                // The close button counts when it's showing: always, or under the pointer.
                 if close
-                    && self
-                        .wins
-                        .get(&w)
-                        .is_some_and(|win| matches!(win.hover, Some(Hit::Tab { index: i, .. }) if i == index))
+                    && (self.loaded.app.always_show_tab_close
+                        || self
+                            .wins
+                            .get(&w)
+                            .is_some_and(|win| matches!(win.hover, Some(Hit::Tab { index: i, .. }) if i == index)))
                 {
                     self.close_tab(tab, false);
                     return;
@@ -334,7 +350,21 @@ impl App {
                 return;
             }
             Hit::Plus => {
-                self.plus_menu(w, x, y);
+                // A click does what `plus_button` says; a right-click always shows the menu.
+                let choice = if button == 2 { "menu".to_string() } else { self.loaded.app.plus_button.clone() };
+                match choice.as_str() {
+                    "new_tab" => self.new_tab(w),
+                    "new_window" => self.perform(Action::NewWindow),
+                    "reopen_tab" => self.perform(Action::ReopenTab),
+                    "top_starter" => {
+                        self.refresh_starters();
+                        match self.starters.first().cloned() {
+                            Some(s) => self.new_tab_with(w, Some(s.folder), Some(s.command)),
+                            None => self.new_tab(w),
+                        }
+                    }
+                    _ => self.plus_menu(w, x, y),
+                }
                 return;
             }
             Hit::Light(l) => {
@@ -421,7 +451,7 @@ impl App {
         // Dividers between tiles.
         if let Some(win) = self.wins.get_mut(&w)
             && let Some(t) = &win.tiles
-            && let Some(path) = t.divider_at(win.term_rect, x, y, 3.0)
+            && let Some(path) = t.divider_at(win.term_rect, x, y, DIVIDER_SLOP)
         {
             win.dragging_divider = Some(path);
             return;
@@ -461,6 +491,13 @@ impl App {
             _ => Unit::Character,
         };
         let pt = Point { place, column: col };
+        // One selection in a window: starting one clears the other tiles'.
+        let others: Vec<u64> = self.wins[&w].tile_rects.iter().map(|x| x.0).filter(|t| *t != tab).collect();
+        for t in others {
+            if let Some(v) = self.views.get_mut(&t) {
+                v.selection = None;
+            }
+        }
         if let Some(v) = self.views.get_mut(&tab) {
             if flags & keys::SHIFT != 0
                 && let Some(sel) = v.selection.as_mut()
@@ -516,6 +553,7 @@ impl App {
             return;
         }
         if let Some(path) = win.dragging_divider.clone() {
+            plat::set_cursor(divider_cursor(win.tiles.as_ref().and_then(|t| t.split_at(&path))));
             let area = win.term_rect;
             if let Some(t) = win.tiles.as_mut() {
                 t.drag_divider(&path, area, x, y);
@@ -696,6 +734,18 @@ impl App {
                 win.dirty = Some(Dirty::All);
             }
             self.redraw_dirty();
+            return;
+        }
+        // A divider between tiles: a press there moves it rather than selecting, so it says so.
+        let win = self.wins.get_mut(&w).unwrap();
+        if let Some(t) = &win.tiles
+            && let Some(path) = t.divider_at(win.term_rect, x, y, DIVIDER_SLOP)
+        {
+            plat::set_cursor(divider_cursor(t.split_at(&path)));
+            if win.hover_link.take().is_some() {
+                win.dirty = Some(Dirty::All);
+                self.redraw_dirty();
+            }
             return;
         }
         // ⌘ (Ctrl on Linux) over a link underlines it.
