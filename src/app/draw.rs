@@ -48,9 +48,10 @@ impl App {
             match model::compose(&v.screen, &v.history, v.pos, height, v.columns) {
                 Composed::Rows(r) => return r,
                 Composed::Need(n) => {
-                    let before = v.history.len();
                     self.fetch_history(tab, n);
-                    if self.views.get(&tab).is_none_or(|v| v.history.len() == before) {
+                    // Whether the line came (not whether the cache grew: a full cache drops as many
+                    // lines as it takes in).
+                    if self.views.get(&tab).is_none_or(|v| v.history.get(n).is_none()) {
                         // The server has no such line any more: go back to live.
                         if let Some(v) = self.views.get_mut(&tab) {
                             v.pos = ViewPos::Live;

@@ -240,6 +240,16 @@ pub fn start() {
             .map(|w| w.tile_rects.iter().filter_map(|(t, _)| app.tab_info(*t).map(|i| i.columns)).collect())
             .unwrap_or_default();
         r.check(sizes.len() == 2 && sizes.iter().all(|c| *c < 200), "each tile resized its tab");
+        // ⌘⌥← and ⌘⌥→ move the focus between them.
+        let ts = tiles(app, r.window);
+        app.perform(Action::FocusLeft);
+        let left = app.focused_tab(r.window);
+        app.perform(Action::FocusRight);
+        let right = app.focused_tab(r.window);
+        r.check(
+            ts.len() == 2 && left == Some(ts[0]) && right == Some(ts[1]),
+            &format!("Focus Tile on the Left/Right moves between tiles ({left:?}, {right:?} of {ts:?})"),
+        );
         // Some text in the tile without the `seq` output, to select in each.
         let other = tiles(app, r.window).into_iter().find(|t| find_row(app, *t, "400").is_none());
         if let Some(t) = other
@@ -426,6 +436,72 @@ pub fn start() {
             "Secure Keyboard Entry is off once the password has been entered",
         );
         r.check(!screen_text(app, r.tab).iter().any(|l| l.contains("hunter2")), "the password isn't shown");
+    }));
+    // Selecting in a long scrollback, scrolled back further than the app keeps cached: the view
+    // stays where it is and every row stays drawn while the pointer moves.
+    steps.push_back(Box::new(|app, r| {
+        r.tab = app.focused_tab(r.window).unwrap_or(r.tab);
+        type_text(app, r.window, "seq 1 30000");
+        enter(app, r.window);
+    }));
+    steps.push_back(Box::new(|app, _r| app.latencies.clear()));
+    steps.push_back(Box::new(|app, r| {
+        let cols = app.views.get(&r.tab).map(|v| v.columns).unwrap_or(80);
+        for _ in 0..30 {
+            app.scroll_rows(r.tab, 300, true, cols);
+            app.redraw_dirty();
+        }
+        let before = app.views.get(&r.tab).map(|v| v.pos);
+        let rows = app.views.get(&r.tab).map(|v| v.drawn.len()).unwrap_or(0);
+        let mid = rows / 2;
+        let mut steady = matches!(before, Some(ViewPos::At { .. }));
+        let mut seen = Vec::new();
+        if let Some((x, y)) = cell_point(app, r.window, r.tab, 0, mid.saturating_sub(2)) {
+            app.mouse_down(r.window, x, y, 1, 0, 1);
+        }
+        for (col, row) in [(2, mid - 2), (3, mid - 1), (1, mid), (4, mid + 1), (2, mid + 2), (0, mid - 1)] {
+            let Some((x, y)) = cell_point(app, r.window, r.tab, col, row) else { continue };
+            app.mouse_dragged(r.window, x, y, 0, 1);
+            app.redraw_dirty();
+            let v = &app.views[&r.tab];
+            let blank = v.drawn.iter().any(|p| app.row_at(r.tab, *p).is_none_or(|row| row.text().trim().is_empty()));
+            seen.push((v.pos, blank));
+            steady &= Some(v.pos) == before && !blank && v.selection.is_some();
+        }
+        if let Some((x, y)) = cell_point(app, r.window, r.tab, 0, mid - 1) {
+            app.mouse_up(r.window, x, y, 0, 1);
+        }
+        r.check(
+            steady,
+            &format!("selecting deep in a long scrollback keeps the view and its rows ({before:?} → {seen:?})"),
+        );
+        app.scroll_rows(r.tab, 1_000_000, false, cols);
+    }));
+    // Split Down (⇧⌘D): a new tab under this one; Focus Tile Above goes back; closing it leaves one.
+    steps.push_back(Box::new(|app, r| {
+        r.tab = app.focused_tab(r.window).unwrap_or(r.tab);
+        r.count = tab_count(app, r.window);
+        app.perform(Action::SplitDown);
+    }));
+    steps.push_back(Box::new(|app, r| {
+        let rects: Vec<(u64, crate::layout::Rect)> =
+            app.wins.get(&r.window).map(|w| w.tile_rects.clone()).unwrap_or_default();
+        let new = app.focused_tab(r.window);
+        let stacked = rects.len() == 2
+            && rects[0].0 == r.tab
+            && Some(rects[1].0) == new
+            && rects[1].1.y > rects[0].1.y
+            && (rects[1].1.x - rects[0].1.x).abs() < 1.0;
+        r.check(stacked && tab_count(app, r.window) == r.count + 1, "Split Down opens a tab below this one, focused");
+        app.perform(Action::FocusUp);
+        r.check(app.focused_tab(r.window) == Some(r.tab), "Focus Tile Above goes back to it");
+        if let Some(t) = new {
+            app.close_tab(t, true);
+        }
+    }));
+    steps.push_back(Box::new(|app, r| {
+        let n = app.wins.get(&r.window).map(|w| w.tile_rects.len()).unwrap_or(0);
+        r.check(n == 1 && app.focused_tab(r.window) == Some(r.tab), "closing the split leaves the tab whole");
     }));
     steps.push_back(Box::new(|app, _r| app.latencies.clear()));
     // Keystroke to pixels: type characters one at a time and time each echo being drawn.

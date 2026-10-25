@@ -787,7 +787,7 @@ impl App {
         }
     }
 
-    fn row_at(&self, tab: u64, place: Place) -> Option<crate::text::Row> {
+    pub fn row_at(&self, tab: u64, place: Place) -> Option<crate::text::Row> {
         let v = self.views.get(&tab)?;
         selection::Source::row(&TabSource { view: v, history: &v.history }, place)
     }

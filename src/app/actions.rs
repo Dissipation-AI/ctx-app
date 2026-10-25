@@ -161,6 +161,8 @@ impl App {
                     }
                 }
             }
+            Action::SplitRight => self.split(w, Edge::Right),
+            Action::SplitDown => self.split(w, Edge::Bottom),
             Action::FocusLeft => self.focus_in(w, Edge::Left),
             Action::FocusRight => self.focus_in(w, Edge::Right),
             Action::FocusUp => self.focus_in(w, Edge::Top),
@@ -207,6 +209,37 @@ impl App {
     // -----------------------------------------------------------------------------------------
     // Tiles
     // -----------------------------------------------------------------------------------------
+
+    /// A new tab in the focused tile's folder, shown beside it (`edge`: where).
+    pub fn split(&mut self, w: Option<u64>, edge: Edge) {
+        let Some(w) = w else { return };
+        let Some(target) = self.focused_tab(w) else { return };
+        let folder = self.tab_info(target).map(|t| t.folder.clone());
+        let r = Request::OpenTab { window: Some(WindowRef::Number(w)), folder, name: None, agent: None };
+        self.request("ctx open tab", r, move |app, r| match r {
+            Response::Ok(Output::Opened(o)) => {
+                if let Some(t) = o.tab {
+                    if app.window_of(t) == Some(w) {
+                        app.tile(w, t, Some(target), edge);
+                    } else {
+                        // Tiled once the tab list with it arrives.
+                        app.pending_tile = Some((w, t, target, edge));
+                    }
+                }
+            }
+            Response::Error(e) => app.error(&e.message),
+            _ => {}
+        });
+    }
+
+    /// Whether a focus move in a direction has somewhere to go (for the menu).
+    pub fn can_focus(&self, edge: Edge) -> bool {
+        let Some(win) = self.key_window().and_then(|w| self.wins.get(&w)) else { return false };
+        match (&win.tiles, win.focused) {
+            (Some(t), Some(f)) => t.neighbour(f, edge, win.term_rect).is_some(),
+            _ => false,
+        }
+    }
 
     /// Show `tab` next to the focused tile of window `w`.
     pub fn tile(&mut self, w: u64, tab: u64, target: Option<u64>, edge: Edge) {
