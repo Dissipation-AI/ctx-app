@@ -29,6 +29,21 @@ scripts/install-mac.sh --help   # --debug, --keep-tcc, --keep-server, --uninstal
 Set `CTX_HOME=/some/folder` to try it against a separate server (`ctx server` with the same
 `CTX_HOME`) without touching your tabs, launchd or PATH.
 
+### A shortcut from anywhere (macOS)
+
+CTX offers two system services, **New CTX Window** and **New CTX Tab**. They work from any app
+and launch CTX if it isn't running. Give one a shortcut in System Settings → Keyboard → Keyboard
+Shortcuts → Services → General, for example ⌃⌥T. Or from the command line:
+
+```sh
+defaults write pbs NSServicesStatus -dict-add '"ai.dissipation.ctx - New CTX Window - newWindow"' \
+    '{ enabled_context_menu = 1; enabled_services_menu = 1; key_equivalent = "^~t"; }'
+/System/Library/CoreServices/pbs -update
+```
+
+(`^` is ⌃, `~` is ⌥, `$` is ⇧ and `@` is ⌘.) The services appear once CTX.app is in
+/Applications (or after `pbs -update`).
+
 ### Linux
 
 Needs the X11 and fontconfig development packages, and Xvfb, xdotool and ImageMagick for the

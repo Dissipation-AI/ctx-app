@@ -30,5 +30,37 @@
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Apache-2.0</string>
+    <!-- System-wide "New CTX Window" / "New CTX Tab": listed in System Settings → Keyboard →
+         Keyboard Shortcuts → Services → General, where any shortcut (e.g. ⌃⌥T) can be given.
+         They work from any app, and launch CTX if it isn't running. -->
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>New CTX Window</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>newWindow</string>
+            <key>NSPortName</key>
+            <string>CTX</string>
+            <key>NSRequiredContext</key>
+            <dict/>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>New CTX Tab</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>newTab</string>
+            <key>NSPortName</key>
+            <string>CTX</string>
+            <key>NSRequiredContext</key>
+            <dict/>
+        </dict>
+    </array>
 </dict>
 </plist>
