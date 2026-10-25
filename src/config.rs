@@ -12,8 +12,8 @@ pub struct AppConfig {
     /// The default theme for tabs: a built-in (`ghostty`, the default), `system` (Terminal.app's
     /// Basic, following macOS light/dark) or a theme file name. Each tab can choose its own.
     pub theme: String,
-    /// The theme each new window starts with: a theme name, `random` (a different one for each
-    /// window, from `random_themes`), or empty for `theme`.
+    /// The theme each new window starts with: a theme name, `random` (the default: a different one
+    /// for each window, from `random_themes`), or empty for `theme`.
     pub new_window_theme: String,
     /// The theme each new tab (or pane) starts with, as `new_window_theme`. It's the tab's own, so
     /// it wins over its window's.
@@ -46,7 +46,7 @@ impl Default for AppConfig {
             font: "SF Mono".into(),
             font_size: 13.0,
             theme: "ghostty".into(),
-            new_window_theme: String::new(),
+            new_window_theme: "random".into(),
             new_tab_theme: String::new(),
             random_themes: Vec::new(),
             left_option_is_meta: true,
@@ -154,7 +154,7 @@ font = "SF Mono"
 font_size = 13
 theme = "ghostty"           # ghostty, jet, midnight, forest, plum, ember, ocean, graphite, basic, basic-dark,
                             # system (Basic, following macOS light/dark), or a theme file name
-new_window_theme = ""       # each new window's theme: a name, "random" (a different one each time), or "" for theme
+new_window_theme = "random" # each new window's theme: a name, "random" (a different one each time), or "" for theme
 new_tab_theme = ""          # the same for each new tab or pane (a tab's theme wins over its window's)
 random_themes = []          # what "random" picks from; [] for the dark built-ins
 left_option_is_meta = true

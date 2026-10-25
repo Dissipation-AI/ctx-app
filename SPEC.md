@@ -251,7 +251,7 @@ on the shared folders, `sudo scripts/install-helper.sh`, a config edit and a log
 font = "SF Mono"
 font_size = 13
 theme = "ghostty"           # Ghostty's default colours; "system" follows macOS light/dark
-new_window_theme = ""       # each new window's theme: a name, "random", or "" for theme
+new_window_theme = "random" # each new window's theme: a name, "random", or "" for theme
 new_tab_theme = ""          # each new tab's (or pane's): a name, "random", or "" for its window's
 random_themes = []          # what "random" picks from; [] for the dark built-ins
 left_option_is_meta = true
@@ -270,7 +270,7 @@ following macOS), `basic`, `basic-dark`, and the tinted `midnight`, `forest`, `p
 `ocean`, `graphite`. Each window can have its own theme (View → Window Theme), and each tab its
 own (View → Tab Theme, or the tab's menu), which wins over its window's; a pane shown side by side
 is a tab, so it has its own too. `new_window_theme` and `new_tab_theme` give new windows and tabs a
-theme as they open: a name, or `random`, which picks the theme from `random_themes` (the dark
+theme as they open: a name, or `random` (the default for windows), which picks the theme from `random_themes` (the dark
 built-ins by default) that the open windows or tabs use least, so each looks different from its
 neighbours. A new window that gets a theme this way keeps it for its first tab (that tab gets no
 `new_tab_theme` of its own). Windows and tabs that already exist when the app starts keep theirs. Theme files live in `~/.config/ctx/themes/<name>.toml`:
