@@ -189,7 +189,8 @@ on Apple Silicon the GPU's memory is the same RAM, so the buffer count is the ma
 | ⌘F | Find in this tab |
 | ⌘⇧F | Find in all tabs (`ctx find`) |
 | ⌘+ / ⌘- / ⌘0 | Font size |
-| ⌘⌥← → ↑ ↓ | Move focus between side-by-side tiles |
+| ⌘D / ⇧⌘D | Split Right / Split Down: a new tab in this tile's folder, beside or below it |
+| ⌘⌥← → ↑ ↓ | Move focus between side-by-side tiles (greyed out in the Window menu where there's no tile) |
 | ⌘⇧I | Rename tab |
 | ⌘⇧A | Activity panel |
 | ⌘⇧O | Overview of windows, tabs and processes |

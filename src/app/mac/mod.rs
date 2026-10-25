@@ -186,6 +186,21 @@ define_class!(
     }
 
     impl AppDelegate {
+        /// Menu items that would do nothing are greyed out: moving the focus where there's no tile.
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
+            let i = item.tag() as usize;
+            item.action() != Some(sel!(menuAction:))
+                || with_app(|a| match a.menu_actions.get(i) {
+                    Some(Action::FocusLeft) => a.can_focus(crate::layout::Edge::Left),
+                    Some(Action::FocusRight) => a.can_focus(crate::layout::Edge::Right),
+                    Some(Action::FocusUp) => a.can_focus(crate::layout::Edge::Top),
+                    Some(Action::FocusDown) => a.can_focus(crate::layout::Edge::Bottom),
+                    _ => true,
+                })
+                .unwrap_or(true)
+        }
+
         /// The "New CTX Window" service, from any app (System Settings can give it a shortcut).
         #[unsafe(method(newWindow:userData:error:))]
         fn service_new_window(&self, _pboard: Option<&AnyObject>, _data: Option<&AnyObject>, _error: *mut *mut AnyObject) {
