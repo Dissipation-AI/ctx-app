@@ -7,18 +7,13 @@ use super::ui::{self, Colors, Field};
 use crate::layout::Rect;
 use crate::render::{Canvas, PathOp, Rgb, Trunc, UiFont, mix};
 
-/// Height of the tab bar, in points, with each tab's name over its folder. On macOS the tabs
-/// share it with the window's buttons.
+/// Height of the tab bar, in points. On macOS the tabs share it with the window's buttons.
 pub const BAR_H: f64 = 40.0;
-/// Height of the tab bar with one-line tabs (`one_line_tabs`): macOS's own title bar (measured
-/// on macOS 26).
-pub const BAR_H_ONE_LINE: f64 = 32.0;
 /// Height of the find bar and the reopen bar.
 pub const STRIP_H: f64 = 34.0;
 /// Where tabs start: room for the red/yellow/green buttons on macOS.
 pub const TRAFFIC_LIGHTS: f64 = 78.0;
 const TAB_TOP: f64 = 6.0;
-const TAB_TOP_ONE_LINE: f64 = 4.0;
 const TAB_MIN: f64 = 116.0;
 const TAB_MAX: f64 = 240.0;
 const BUTTON_W: f64 = 32.0;
@@ -143,26 +138,15 @@ pub struct BarLayout {
     pub strip: Rect,
     /// The window's buttons, when we draw them (the window has no title bar).
     pub lights: Vec<(Light, Rect)>,
-    /// The bar's height: `BAR_H`, or `BAR_H_ONE_LINE` with one-line tabs.
-    pub height: f64,
-    /// Each tab shows "name — folder" on one line instead of its name over its folder.
-    pub one_line: bool,
-}
-
-/// The tab bar's height, in points.
-pub fn bar_height(one_line: bool) -> f64 {
-    if one_line { BAR_H_ONE_LINE } else { BAR_H }
 }
 
 /// Lay out `n` tabs in a bar `w` points wide, scrolled by `scroll` points, starting at `inset`.
-pub fn bar_layout(ids: &[u64], w: f64, inset: f64, scroll: f64, one_line: bool) -> BarLayout {
-    let bar_h = bar_height(one_line);
-    let tab_top = if one_line { TAB_TOP_ONE_LINE } else { TAB_TOP };
+pub fn bar_layout(ids: &[u64], w: f64, inset: f64, scroll: f64) -> BarLayout {
     let mut buttons = Vec::new();
     let mut bx = w - 6.0;
     for (b, _) in BUTTONS.iter().rev() {
         bx -= BUTTON_W;
-        buttons.push((*b, Rect::new(bx, 4.0, BUTTON_W, bar_h - 8.0)));
+        buttons.push((*b, Rect::new(bx, 4.0, BUTTON_W, BAR_H - 8.0)));
     }
     buttons.reverse();
     let strip_x = inset;
@@ -181,26 +165,24 @@ pub fn bar_layout(ids: &[u64], w: f64, inset: f64, scroll: f64, one_line: bool) 
     let tabs: Vec<(u64, Rect)> = ids
         .iter()
         .enumerate()
-        .map(|(i, t)| (*t, Rect::new(sx + i as f64 * tw - scroll, tab_top, tw, bar_h - tab_top)))
+        .map(|(i, t)| (*t, Rect::new(sx + i as f64 * tw - scroll, TAB_TOP, tw, BAR_H - TAB_TOP)))
         .collect();
     let plus_x = if overflow { sx + sw + CHEVRON_W } else { sx + tw * ids.len() as f64 + 2.0 };
     BarLayout {
         tabs,
-        plus: Rect::new(plus_x, tab_top + 3.0, PLUS_W - 4.0, bar_h - tab_top - 8.0),
+        plus: Rect::new(plus_x, TAB_TOP + 3.0, PLUS_W - 4.0, BAR_H - TAB_TOP - 8.0),
         buttons,
-        left: overflow.then(|| Rect::new(strip_x, tab_top, CHEVRON_W, bar_h - tab_top)),
-        right: overflow.then(|| Rect::new(sx + sw, tab_top, CHEVRON_W, bar_h - tab_top)),
-        strip: Rect::new(sx, 0.0, sw, bar_h),
+        left: overflow.then(|| Rect::new(strip_x, TAB_TOP, CHEVRON_W, BAR_H - TAB_TOP)),
+        right: overflow.then(|| Rect::new(sx + sw, TAB_TOP, CHEVRON_W, BAR_H - TAB_TOP)),
+        strip: Rect::new(sx, 0.0, sw, BAR_H),
         lights: Vec::new(),
-        height: bar_h,
-        one_line,
     }
 }
 
 impl BarLayout {
     /// Add the window's red/yellow/green buttons in the room left of the tabs.
     pub fn with_lights(mut self) -> BarLayout {
-        let y = ((self.height - LIGHT_D) / 2.0).round();
+        let y = ((BAR_H - LIGHT_D) / 2.0).round();
         self.lights = LIGHTS
             .iter()
             .enumerate()
@@ -291,7 +273,7 @@ fn px(r: Rect, s: f64) -> Rect {
 
 /// Draw the tab bar across the top of the buffer.
 pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &Colors, s: f64) {
-    let bar = Rect::new(0.0, 0.0, f.width * s, f.layout.height * s);
+    let bar = Rect::new(0.0, 0.0, f.width * s, BAR_H * s);
     c.fill(col.bar, 1.0, bar.x, bar.y, bar.w, bar.h);
     draw_lights(c, f, col, s);
     let strip = px(f.layout.strip, s);
@@ -328,7 +310,6 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
             col,
             s,
             f.active,
-            f.layout.one_line,
             f.always_close,
         );
         // A thin separator between plain unselected neighbours.
@@ -336,8 +317,7 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
         let plain = |n: &TabItem, j: usize| !n.selected && unselected_fill(n, hovered(j), col).is_none();
         if plain(item, i) && next.is_some_and(|n| plain(n, i + 1)) {
             let x = (r.x + r.w) * s;
-            let inset = if f.layout.one_line { 7.0 } else { 9.0 };
-            c.fill(col.line, 0.7, x - 0.5 * s, (r.y + inset) * s, s.max(1.0), (r.h - 2.0 * inset) * s);
+            c.fill(col.line, 0.7, x - 0.5 * s, (TAB_TOP + 9.0) * s, s.max(1.0), (BAR_H - TAB_TOP - 18.0) * s);
         }
     }
     c.clip(None);
@@ -423,7 +403,6 @@ fn draw_tab<C: Canvas>(
     col: &Colors,
     s: f64,
     active: bool,
-    one_line: bool,
     always_close: bool,
 ) {
     let rad = 8.0 * s;
@@ -471,7 +450,7 @@ fn draw_tab<C: Canvas>(
     let lf = if item.selected { &fonts.label_bold } else { &fonts.label };
     let lh = lf.height();
     let ph = fonts.small.height();
-    let ty = if one_line { (top + (h - lh) / 2.0).round() } else { (top + (h - lh - ph - 1.0 * s) / 2.0).round() };
+    let ty = (top + (h - lh - ph - 1.0 * s) / 2.0).round();
     let line2 = ty + lh + 1.0 * s;
     // Activity badge at the right of the first line: filled for "typed", a ring for "read".
     if let Some(typed) = item.badge {
@@ -498,47 +477,13 @@ fn draw_tab<C: Canvas>(
         c.fill_rounded(dc, 1.0, left, ty + (lh - d) / 2.0, d, d, [d / 2.0; 4]);
         left += d + 6.0 * s;
     }
+    // First line: the label, what the eye reads first.
     let avail = (right - left).max(10.0 * s);
     let strong = if item.selected && active { col.text } else { mix(col.text, under, 0.2) };
-    if one_line {
-        // "name — folder": the name first and whole where it can be, the rest after a dash,
-        // dimmer, cut from the front so the folder's last part shows.
-        // A tab named after its folder doesn't repeat it ("~ — ~").
-        let path = if item.path.rsplit('/').next() == Some(item.label.as_str()) { "" } else { item.path.as_str() };
-        let rest = item.agent.is_some() || item.launcher.is_some() || !path.is_empty();
-        let room_for_rest = 48.0 * s;
-        let cap = if rest && lf.measure(&item.label) + room_for_rest > avail {
-            (avail - room_for_rest).max(avail * 0.6)
-        } else {
-            avail
-        };
-        let tw = c.text(lf, &item.label, left, ty, cap, strong, Trunc::Tail);
-        let x2 = left + tw;
-        if rest && right - x2 > 24.0 * s {
-            let dw = c.text(&fonts.label, " — ", x2, ty, right - x2, col.dim, Trunc::Tail);
-            draw_details(c, item, path, &fonts.label, x2 + dw, ty, right, col, s);
-        }
-    } else {
-        // First line: the label, what the eye reads first. Second line, smaller and dimmer.
-        c.text(lf, &item.label, left, ty, avail, strong, Trunc::Tail);
-        draw_details(c, item, &item.path, &fonts.small, left, line2, x + w - 10.0 * s, col, s);
-    }
-}
-
-/// A tab's details, from `x2` to `end2` at `line2`: who opened it (an agent), a launcher, then
-/// `path`.
-#[allow(clippy::too_many_arguments)]
-fn draw_details<C: Canvas>(
-    c: &mut C,
-    item: &TabItem,
-    path: &str,
-    font: &UiFont,
-    mut x2: f64,
-    line2: f64,
-    end2: f64,
-    col: &Colors,
-    s: f64,
-) {
+    c.text(lf, &item.label, left, ty, avail, strong, Trunc::Tail);
+    // Second line, smaller and dimmer: who opened it (an agent), a launcher, then the folder.
+    let mut x2 = left;
+    let end2 = x + w - 10.0 * s;
     if let Some(a) = &item.agent {
         let text = match item.status {
             Status::AgentWaiting => format!("{a} · waiting"),
@@ -546,15 +491,15 @@ fn draw_details<C: Canvas>(
             _ => a.clone(),
         };
         let tint = if item.status == Status::AgentWaiting { col.waiting } else { col.agent };
-        let tw = c.text(font, &text, x2, line2, (end2 - x2) * 0.6, tint, Trunc::Tail);
+        let tw = c.text(&fonts.small, &text, x2, line2, (end2 - x2) * 0.6, tint, Trunc::Tail);
         x2 += tw + 6.0 * s;
     }
     if let Some(l) = &item.launcher {
-        let tw = c.text(font, &format!("⚿ {l}"), x2, line2, (end2 - x2) * 0.5, col.launcher, Trunc::Tail);
+        let tw = c.text(&fonts.small, &format!("⚿ {l}"), x2, line2, (end2 - x2) * 0.5, col.launcher, Trunc::Tail);
         x2 += tw + 6.0 * s;
     }
     if end2 - x2 > 12.0 * s {
-        c.text(font, path, x2, line2, end2 - x2, col.dim, Trunc::Head);
+        c.text(&fonts.small, &item.path, x2, line2, end2 - x2, col.dim, Trunc::Head);
     }
 }
 
@@ -820,7 +765,7 @@ mod tests {
 
     #[test]
     fn tabs_share_the_bar_and_overflow_scrolls() {
-        let l = bar_layout(&[1, 2, 3], 900.0, 8.0, 0.0, false);
+        let l = bar_layout(&[1, 2, 3], 900.0, 8.0, 0.0);
         assert_eq!(l.tabs.len(), 3);
         assert!(l.left.is_none());
         assert_eq!(l.tabs[0].1.w, TAB_MAX, "few tabs get the most width");
@@ -835,11 +780,11 @@ mod tests {
         assert_eq!(l.insertion(10_000.0), 3);
         // Thirty tabs don't fit: chevrons, and scrolling brings the last into view.
         let ids: Vec<u64> = (1..=30).collect();
-        let l = bar_layout(&ids, 900.0, 8.0, 0.0, false);
+        let l = bar_layout(&ids, 900.0, 8.0, 0.0);
         assert!(l.left.is_some() && l.right.is_some());
         assert_eq!(l.tabs[0].1.w, TAB_MIN);
         let sc = l.scroll_to(30, 0.0);
-        let l2 = bar_layout(&ids, 900.0, 8.0, sc, false);
+        let l2 = bar_layout(&ids, 900.0, 8.0, sc);
         let r = l2.tabs[29].1;
         assert!(r.x + r.w <= l2.strip.x + l2.strip.w + 0.5 && r.x >= l2.strip.x - 0.5);
         // Clicks on hidden tabs (outside the strip) don't count.
@@ -848,7 +793,7 @@ mod tests {
 
     #[test]
     fn traffic_lights_push_tabs_right() {
-        let l = bar_layout(&[1], 900.0, TRAFFIC_LIGHTS, 0.0, false);
+        let l = bar_layout(&[1], 900.0, TRAFFIC_LIGHTS, 0.0);
         assert!(l.tabs[0].1.x >= TRAFFIC_LIGHTS);
         assert_eq!(l.hit(20.0, 20.0), Hit::Bar);
         // Drawn buttons sit in that room, left of the first tab; the bar around them still drags.
@@ -861,20 +806,12 @@ mod tests {
     }
 
     #[test]
-    fn one_line_tabs_fit_a_title_bar() {
-        let l = bar_layout(&[1, 2], 900.0, TRAFFIC_LIGHTS, 0.0, true).with_lights();
-        assert_eq!(l.height, BAR_H_ONE_LINE);
-        assert_eq!(l.strip.h, BAR_H_ONE_LINE);
-        // Everything stays inside the bar.
-        let parts = l.tabs.iter().map(|(_, r)| r).chain(l.buttons.iter().map(|(_, r)| r)).chain([&l.plus]);
-        for r in parts {
-            assert!(r.y >= 0.0 && r.y + r.h <= BAR_H_ONE_LINE, "{r:?}");
-        }
-        // The window's buttons where AppKit puts its own in a 32 pt title bar.
+    fn window_buttons_at_the_systems_size_and_spacing() {
+        let l = bar_layout(&[1, 2], 900.0, TRAFFIC_LIGHTS, 0.0).with_lights();
+        // AppKit's on macOS 26: 14 pt circles, 9 pt from the left, 23 pt apart, centred in the bar.
         let lights: Vec<(f64, f64, f64)> = l.lights.iter().map(|(_, r)| (r.x, r.y, r.w)).collect();
-        assert_eq!(lights, vec![(9.0, 9.0, 14.0), (32.0, 9.0, 14.0), (55.0, 9.0, 14.0)]);
-        assert_eq!(l.hit(16.0, 16.0), Hit::Light(Light::Close));
-        assert_eq!(l.hit(l.tabs[1].1.x + 60.0, 16.0), Hit::Tab { tab: 2, index: 1, close: false });
+        assert_eq!(lights, vec![(9.0, 13.0, 14.0), (32.0, 13.0, 14.0), (55.0, 13.0, 14.0)]);
+        assert_eq!(l.hit(16.0, 20.0), Hit::Light(Light::Close));
     }
 
     #[test]

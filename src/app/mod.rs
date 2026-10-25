@@ -1019,9 +1019,7 @@ impl App {
         let selected = saved.selected.filter(|t| info_tabs.contains(t)).or(info_tabs.first().copied());
         let fonts = self.fonts.get(&self.loaded.app.font, self.loaded.app.font_size, 2.0);
         let (cw, chh) = (fonts.cell_w / 2.0, fonts.cell_h / 2.0);
-        let one_line = self.loaded.app.one_line_tabs;
-        let bar_h = chrome::bar_height(one_line);
-        let default_size = (80.0 * cw + 2.0 * render::PAD_X, 24.0 * chh + 2.0 * render::PAD_Y + bar_h);
+        let default_size = (80.0 * cw + 2.0 * render::PAD_X, 24.0 * chh + 2.0 * render::PAD_Y + chrome::BAR_H);
         let views = plat::make_window(n, saved.frame, default_size, self.wins.len(), self.loaded.app.tabs_in_titlebar);
         let scale = plat::backing_scale(&views);
         let win = Win {
@@ -1037,9 +1035,9 @@ impl App {
             theme_name,
             dirty: Some(Dirty::All),
             chrome_dirty: true,
-            term_rect: Rect::new(0.0, bar_h, default_size.0, default_size.1 - bar_h),
+            term_rect: Rect::new(0.0, chrome::BAR_H, default_size.0, default_size.1 - chrome::BAR_H),
             tile_rects: Vec::new(),
-            bar: chrome::bar_layout(&[], default_size.0, 8.0, 0.0, one_line),
+            bar: chrome::bar_layout(&[], default_size.0, 8.0, 0.0),
             bar_scroll: 0.0,
             hover: None,
             drop_hint: None,
@@ -1387,20 +1385,19 @@ impl App {
         let (cw, ch) = plat::content_size(&win.views);
         let ids: Vec<u64> = self.window_info(w).map(|i| i.tabs.iter().map(|t| t.number).collect()).unwrap_or_default();
         let inset = plat::titlebar_inset(&win.views);
-        let one_line = self.loaded.app.one_line_tabs;
-        let mut bar = chrome::bar_layout(&ids, cw, inset, win.bar_scroll, one_line);
+        let mut bar = chrome::bar_layout(&ids, cw, inset, win.bar_scroll);
         // Keep the shown tab in view (after a relaunch, a resize, a new tab).
         if let Some(t) = win.focused.or(win.selected) {
             let scroll = bar.scroll_to(t, win.bar_scroll);
             if (scroll - win.bar_scroll).abs() > 0.5 {
-                bar = chrome::bar_layout(&ids, cw, inset, scroll, one_line);
+                bar = chrome::bar_layout(&ids, cw, inset, scroll);
             }
         }
         if plat::draws_window_buttons(&win.views) {
             bar = bar.with_lights();
         }
         let scroll = bar.tabs.first().map(|(_, r)| (bar.strip.x - r.x).max(0.0)).unwrap_or(0.0);
-        let mut top = bar.height;
+        let mut top = chrome::BAR_H;
         if win.reopen_offer.is_some() {
             top += chrome::STRIP_H;
         }

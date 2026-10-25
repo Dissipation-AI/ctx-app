@@ -40,9 +40,7 @@ pixels from the same code, and only the window, input and font plumbing differ (
   full screen, ⌥-click on green zooms), and on Linux the window resizes from a band along its edges. Tabs sit next to
   those buttons, notebook style, rounded on top, with the selected tab flowing into the terminal
   below it. Each tab has two lines: its label in a large, uniform font on top, its folder smaller
-  and dimmer underneath. With `one_line_tabs = true` it's one line, "label — folder", with the
-  folder dimmer and left out when it's the label, and the bar is 32 pt, macOS's own title bar
-  height, instead of 40. Each tab also has a status dot (idle, busy, agent working, agent waiting for you; agents
+  and dimmer underneath, and a status dot (idle, busy, agent working, agent waiting for you; agents
   are recognised by program name: claude, codex, gemini, aider, …). When tabs don't fit, the bar
   scrolls, with chevrons at the ends. At the right end are buttons for **+**, **History** and
   **Activity**. All of it is drawn in the window's own pixel buffer: no native controls.
@@ -261,7 +259,6 @@ confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
 tabs_in_titlebar = true     # false: a plain title bar with the tabs below it
-one_line_tabs = false       # true: "name — folder" on one line, in a bar as short as a title bar
 plus_button = "menu"        # the + in the tab bar: menu, new_tab, new_window, reopen_tab or top_starter
 always_show_tab_close = false   # true: every tab shows its close button, so titles don't shift on hover
 ```
