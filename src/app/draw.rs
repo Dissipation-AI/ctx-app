@@ -1,11 +1,14 @@
 //! Drawing a window: its tab bar, terminal tiles, find and reopen strips, and any panel, menu or
-//! dialog, all into the window's one buffer. Only what changed is redrawn: rows of the terminal
-//! that changed, or just the bar.
+//! dialog. Only what changed is redrawn: rows of the terminal that changed, or just the bar. On
+//! macOS the window shows its buffer in place, and drawing into it while the compositor reads it
+//! shows half-drawn frames (worst in big windows, where a full redraw takes longest). So each frame
+//! goes into another buffer (up to four, a few only while drawing), plus what that one missed
+//! while others were shown, and replaces the one on screen.
 
 use super::chrome::{self, BarFrame, ChromeFonts, Hit, Status, TabItem};
 use super::panels;
 use super::ui::{self, Colors};
-use super::{App, BADGE_SECONDS, Dirty, Focus, TabSource, plat};
+use super::{App, BADGE_SECONDS, Dirty, Focus, Spare, TabSource, later, plat};
 use crate::layout::Rect;
 use crate::model::{self, Composed, Place, ViewPos};
 use crate::render::{self, Canvas, CursorFrame, Damage, TileFrame};
@@ -13,7 +16,10 @@ use crate::text::Row;
 use ctx_protocol::*;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// How long after a window's last draw its spare surfaces are brought up to date.
+const SPARE_CATCH_UP_MS: u64 = 30;
 
 impl App {
     pub fn redraw_dirty(&mut self) {
@@ -27,6 +33,45 @@ impl App {
             .collect();
         for w in ws {
             self.draw_window(w);
+        }
+    }
+
+    /// A draw put off while the other surface was still on screen.
+    fn redraw_again(&mut self, w: u64) {
+        if let Some(win) = self.wins.get_mut(&w) {
+            win.spare_retry = false;
+            if win.dirty.is_some() || win.chrome_dirty {
+                self.draw_window(w);
+            }
+        }
+    }
+
+    /// Once a window stops drawing, bring its spare surfaces up to date with the one on screen
+    /// (copying beats redrawing what they missed on the next keystroke); give them back after a
+    /// second.
+    fn idle_spares(&mut self) {
+        self.spare_timer = false;
+        let mut busy = false;
+        for win in self.wins.values_mut() {
+            let idle = win.last_draw.elapsed();
+            if idle >= Duration::from_millis(900) {
+                win.spares.clear();
+            } else if idle >= Duration::from_millis(SPARE_CATCH_UP_MS - 5)
+                && let Some(shown) = &win.surface
+            {
+                for s in win.spares.iter_mut().filter(|s| s.missed.is_some() || s.bar) {
+                    if !s.surface.in_use() {
+                        s.surface.copy_from(shown);
+                        s.missed = None;
+                        s.bar = false;
+                    }
+                }
+            }
+            busy |= !win.spares.is_empty();
+        }
+        if busy {
+            self.spare_timer = true;
+            plat::after(SPARE_CATCH_UP_MS, Box::new(|| later(|a| a.idle_spares())));
         }
     }
 
@@ -189,7 +234,54 @@ impl App {
         let has_panel = win.panel.is_some();
         let mut dirty = win.dirty.clone();
         let mut chrome_dirty = win.chrome_dirty;
+        // What the surface on screen now will be missing once this frame is shown.
+        let this_frame = (dirty.clone(), chrome_dirty);
+        if plat::SHOWN_IN_PLACE {
+            let win = self.wins.get_mut(&w).unwrap();
+            win.spares.retain(|s| s.surface.width == pw && s.surface.height == ph);
+            let free = win.spares.iter().rposition(|s| !s.surface.in_use());
+            // Every surface is still being read (the one on screen and three shown just before):
+            // draw in a moment.
+            if free.is_none() && win.spares.len() >= 3 && win.spare_waits < 25 {
+                if !win.spare_retry {
+                    win.spare_retry = true;
+                    win.spare_waits += 1;
+                    plat::after(1, Box::new(move || later(move |a| a.redraw_again(w))));
+                }
+                return;
+            }
+            win.spare_waits = 0;
+            let next = match free {
+                Some(i) => Some(win.spares.remove(i)),
+                None => plat::new_surface(&win.views, pw, ph).map(|surface| Spare {
+                    surface,
+                    missed: Some(Dirty::All),
+                    bar: true,
+                }),
+            };
+            if let Some(mut n) = next {
+                // It missed a whole frame: copying the one on screen is cheaper than drawing it.
+                if matches!(n.missed, Some(Dirty::All))
+                    && let Some(shown) = &win.surface
+                    && shown.width == pw
+                    && shown.height == ph
+                {
+                    n.surface.copy_from(shown);
+                    n.missed = None;
+                    n.bar = false;
+                }
+                dirty = union(dirty, n.missed);
+                chrome_dirty |= n.bar;
+                if let Some(shown) = win.surface.replace(n.surface) {
+                    win.spares.push(Spare { surface: shown, missed: None, bar: false });
+                }
+                if win.spares.len() > 3 {
+                    win.spares.remove(0);
+                }
+            }
+        }
         // A buffer of the right size.
+        let win = &self.wins[&w];
         let need_new = win.surface.as_ref().is_none_or(|s| s.width != pw || s.height != ph);
         if need_new {
             let Some(s) = plat::new_surface(&win.views, pw, ph) else { return };
@@ -434,6 +526,17 @@ impl App {
         win.dirty = None;
         win.chrome_dirty = false;
         plat::present(&win.views, win.surface.as_ref().unwrap(), scale);
+        win.last_draw = Instant::now();
+        if plat::SHOWN_IN_PLACE && !win.spares.is_empty() {
+            for s in &mut win.spares {
+                s.missed = union(s.missed.take(), this_frame.0.clone());
+                s.bar |= this_frame.1;
+            }
+            if !self.spare_timer {
+                self.spare_timer = true;
+                plat::after(SPARE_CATCH_UP_MS, Box::new(|| later(|a| a.idle_spares())));
+            }
+        }
         // CTX_APP_DUMP=<folder>: save each window's pixels after drawing (debugging, tests).
         if let Some(dir) = std::env::var_os("CTX_APP_DUMP")
             && let Some(s) = win.surface.as_mut()
@@ -597,4 +700,16 @@ pub fn label_font(fc: &mut render::FontCache, scale: f64) -> Rc<render::UiFont> 
 /// The fonts menus are drawn with: label, small.
 pub fn menu_fonts(fc: &mut render::FontCache, scale: f64) -> (Rc<render::UiFont>, Rc<render::UiFont>) {
     (fc.ui(12.5 * scale, false), fc.ui(10.5 * scale, false))
+}
+
+/// Both sets of damage.
+fn union(a: Option<Dirty>, b: Option<Dirty>) -> Option<Dirty> {
+    match (a, b) {
+        (Some(Dirty::All), _) | (_, Some(Dirty::All)) => Some(Dirty::All),
+        (Some(Dirty::Rows(mut x)), Some(Dirty::Rows(y))) => {
+            x.extend(y);
+            Some(Dirty::Rows(x))
+        }
+        (x, None) | (None, x) => x,
+    }
 }

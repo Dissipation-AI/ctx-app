@@ -335,6 +335,34 @@ impl Surface {
         Surface { backing: Backing::Heap(vec![0; width * height * 4]), width, height }
     }
 
+    /// Copy `other`'s pixels (the same size) into this one.
+    pub fn copy_from(&mut self, other: &Surface) {
+        let (Backing::Io(to), Backing::Io(from)) = (&self.backing, &other.backing) else { return };
+        if self.width != other.width || self.height != other.height {
+            return;
+        }
+        from.lockWithOptions_seed(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
+        to.lockWithOptions_seed(IOSurfaceLockOptions::empty(), std::ptr::null_mut());
+        let (fb, tb) = (from.bytesPerRow() as usize, to.bytesPerRow() as usize);
+        let row = self.width * 4;
+        for y in 0..self.height {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    from.baseAddress().as_ptr().cast::<u8>().add(y * fb),
+                    to.baseAddress().as_ptr().cast::<u8>().add(y * tb),
+                    row,
+                );
+            }
+        }
+        to.unlockWithOptions_seed(IOSurfaceLockOptions::empty(), std::ptr::null_mut());
+        from.unlockWithOptions_seed(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
+    }
+
+    /// The compositor is still reading these pixels (they're on screen, or were until a moment ago).
+    pub fn in_use(&self) -> bool {
+        matches!(&self.backing, Backing::Io(s) if s.isInUse())
+    }
+
     pub fn io_surface(&self) -> Option<&IOSurface> {
         match &self.backing {
             Backing::Io(s) => Some(s),

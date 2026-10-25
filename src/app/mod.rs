@@ -268,11 +268,26 @@ pub struct TabPress {
     pub previous: Option<u64>,
 }
 
+/// A surface not on screen, and what it hasn't had drawn since it was: rows, and the bar.
+pub struct Spare {
+    pub surface: Surface,
+    pub missed: Option<Dirty>,
+    pub bar: bool,
+}
+
 /// A shown `ctx` window.
 pub struct Win {
     pub number: u64,
     pub views: Views,
     pub surface: Option<Surface>,
+    /// Surfaces shown before `surface` (macOS), drawn into next once the compositor has let go of
+    /// them. At most three; dropped after a second without drawing.
+    pub spares: Vec<Spare>,
+    /// Draws put off in a row because every surface was still being read.
+    pub spare_waits: u8,
+    /// A draw put off that way is scheduled.
+    pub spare_retry: bool,
+    pub last_draw: Instant,
     pub scale: f64,
     pub visible: bool,
     pub key: bool,
@@ -354,6 +369,8 @@ pub struct App {
     pub system_dark: bool,
     pub active: bool,
     pub quitting: bool,
+    /// A check for spare surfaces to drop is scheduled.
+    pub spare_timer: bool,
     pub bindings: BTreeMap<Action, String>,
     pub menu_actions: Vec<Action>,
     pub reconnecting: bool,
@@ -432,6 +449,7 @@ pub fn launched() {
         system_dark: plat::system_is_dark(),
         active: true,
         quitting: false,
+        spare_timer: false,
         bindings,
         menu_actions: Vec::new(),
         reconnecting: false,
@@ -1041,6 +1059,10 @@ impl App {
             number: n,
             views,
             surface: None,
+            spares: Vec::new(),
+            spare_waits: 0,
+            spare_retry: false,
+            last_draw: Instant::now(),
             scale,
             visible: true,
             key: false,

@@ -482,6 +482,17 @@ pub struct Surface {
 }
 
 impl Surface {
+    pub fn copy_from(&mut self, other: &Surface) {
+        if self.width == other.width && self.height == other.height {
+            self.pixels.copy_from_slice(&other.pixels);
+        }
+    }
+
+    /// Never: these pixels are copied to the screen, not shown in place.
+    pub fn in_use(&self) -> bool {
+        false
+    }
+
     pub fn new_heap(width: usize, height: usize) -> Surface {
         let (w, h) = (width.max(1), height.max(1));
         Surface { pixels: vec![0xFF00_0000; w * h], width: w, height: h }
