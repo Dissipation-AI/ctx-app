@@ -271,7 +271,8 @@ own (View → Tab Theme, or the tab's menu), which wins over its window's; a pan
 is a tab, so it has its own too. `new_window_theme` and `new_tab_theme` give new windows and tabs a
 theme as they open: a name, or `random`, which picks the theme from `random_themes` (the dark
 built-ins by default) that the open windows or tabs use least, so each looks different from its
-neighbours. Windows and tabs that already exist when the app starts keep theirs. Theme files live in `~/.config/ctx/themes/<name>.toml`:
+neighbours. A new window that gets a theme this way keeps it for its first tab (that tab gets no
+`new_tab_theme` of its own). Windows and tabs that already exist when the app starts keep theirs. Theme files live in `~/.config/ctx/themes/<name>.toml`:
 
 ```toml
 palette = ["#000000", "#990000", …]   # 16 ANSI colours

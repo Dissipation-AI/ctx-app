@@ -1363,6 +1363,7 @@ impl App {
     /// Give new windows and tabs the themes the config asks for.
     fn theme_new(&mut self, windows: &[u64], tabs: &[u64]) {
         let setting = self.loaded.app.new_window_theme.clone();
+        let mut themed = Vec::new();
         for w in windows {
             if !self.wins.contains_key(w) {
                 continue;
@@ -1376,11 +1377,13 @@ impl App {
             if let Some(name) = self.new_theme(&setting, &in_use) {
                 self.wins.get_mut(w).unwrap().theme_name = Some(name);
                 self.dirty_win(*w);
+                themed.push(*w);
             }
         }
         let setting = self.loaded.app.new_tab_theme.clone();
         for t in tabs {
-            if self.state.tab_themes.contains_key(t) {
+            // A new window's first tab wears the theme the window just got.
+            if self.state.tab_themes.contains_key(t) || self.window_of(*t).is_some_and(|w| themed.contains(&w)) {
                 continue;
             }
             let in_use: Vec<String> = self
