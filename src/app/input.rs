@@ -205,15 +205,16 @@ impl App {
             Focus::Term => {}
         }
         let Some(tab) = self.focused_tab(w) else { return };
-        if let Some(v) = self.views.get_mut(&tab) {
-            v.marked = None;
-        }
+        let composing = self.views.get_mut(&tab).is_some_and(|v| v.marked.take().is_some());
         self.go_live(tab);
         // Enter from an input method arrives as text.
         let t = text.replace('\n', "\r");
         self.key_sent = Some((tab, Instant::now()));
         self.input(tab, AppInput::Text(t));
-        self.dirty_tab(tab);
+        // The echo redraws its own rows; text being composed at the cursor goes now.
+        if composing {
+            self.dirty_tab(tab);
+        }
         self.redraw_dirty();
     }
 

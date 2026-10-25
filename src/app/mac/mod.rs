@@ -660,6 +660,10 @@ pub fn draws_window_buttons(v: &Views) -> bool {
     v.titlebar_tabs
 }
 
+/// The window's layer shows its surface in place, so drawing goes into a second one and the two
+/// swap: drawing into the one on screen shows half-drawn frames.
+pub const SHOWN_IN_PLACE: bool = true;
+
 pub fn new_surface(_v: &Views, w: usize, h: usize) -> Option<Surface> {
     Surface::new_io(w, h)
 }

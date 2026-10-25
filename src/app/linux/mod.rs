@@ -438,6 +438,9 @@ pub fn new_surface(_v: &Views, w: usize, h: usize) -> Option<Surface> {
     Some(Surface::new_heap(w, h))
 }
 
+/// Drawn pixels are copied to the window, so one surface is enough.
+pub const SHOWN_IN_PLACE: bool = false;
+
 /// Show what was drawn.
 pub fn present(v: &Views, s: &Surface, _scale: f64) {
     let mut soft = v.soft.borrow_mut();

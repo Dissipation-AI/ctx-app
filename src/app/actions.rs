@@ -777,6 +777,7 @@ impl App {
         if !visible {
             // Covered, minimised or on another Space: give the pixels back.
             win.surface = None;
+            win.spares.clear();
             plat::release(&win.views);
         } else {
             win.dirty = Some(Dirty::All);
@@ -813,6 +814,7 @@ impl App {
     pub fn scale_changed(&mut self, w: u64) {
         if let Some(win) = self.wins.get_mut(&w) {
             win.surface = None;
+            win.spares.clear();
         }
         self.fonts.prune();
         self.layout(w);
