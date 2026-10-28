@@ -581,12 +581,35 @@ pub fn tab_lines(t: &TabInfo) -> (String, String) {
         Some(h) => h.to_string(),
         None => short_folder(&t.folder),
     };
-    let label = match (&t.name, &t.running) {
+    let label = match (&t.name, running_program(t)) {
         (Some(n), _) => n.clone(),
-        (None, Some(r)) => program_of(r).to_string(),
+        (None, Some(p)) => p,
         (None, None) => folder.rsplit('/').find(|p| !p.is_empty()).unwrap_or("~").to_string(),
     };
     (label, folder)
+}
+
+/// The program a busy tab is running: its foreground process, by name from the kernel (what `ps`
+/// shows), so `cd dir && python` is `python`. An agent run by a generic runtime keeps its own
+/// name (`gemini`, not `node`). While the shell itself is in front (between the parts of
+/// `a && b`), or the process can't be read, it's the command line's first program.
+pub fn running_program(t: &TabInfo) -> Option<String> {
+    let run = t.running.as_deref()?;
+    let typed = program_of(run);
+    let running = t.pid.and_then(crate::process::name).filter(|n| !is_shell(n));
+    Some(match running {
+        Some(p) if RUNTIMES.contains(&p.as_str()) && AGENTS.contains(&typed) => typed.to_string(),
+        Some(p) => p,
+        None => typed.to_string(),
+    })
+}
+
+/// Programs that run other programs, named in `ps` instead of what they run.
+const RUNTIMES: &[&str] = &["node", "bun", "deno"];
+
+/// A shell (a login shell's name starts with `-`).
+fn is_shell(name: &str) -> bool {
+    ["zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh"].contains(&name.trim_start_matches('-'))
 }
 
 /// `claude (pid 5512)` → `claude`.
@@ -624,11 +647,10 @@ pub const AGENTS: &[&str] = &[
 /// An agent counts as working while its title shows a spinner or it printed in the last few
 /// seconds.
 pub fn status_of(t: &TabInfo, last_output: Option<Instant>) -> Status {
-    let Some(run) = &t.running else {
+    let Some(prog) = running_program(t) else {
         return if t.state == "busy" { Status::Busy } else { Status::Idle };
     };
-    let prog = program_of(run);
-    if !AGENTS.contains(&prog) {
+    if !AGENTS.contains(&prog.as_str()) {
         return Status::Busy;
     }
     let spinner = t
@@ -1767,6 +1789,14 @@ mod tests {
         assert_eq!(tab_lines(&t).0, "site");
         t.running = Some("npx claude --resume".into());
         assert_eq!(tab_lines(&t).0, "claude");
+        // The foreground process wins over the typed command: here, this test's own process.
+        t.running = Some("cd dir && python".into());
+        t.pid = Some(std::process::id() as i32);
+        assert!(tab_lines(&t).0.starts_with("ctx"), "{}", tab_lines(&t).0);
+        // Unknown process: the typed command.
+        t.pid = Some(-1);
+        assert_eq!(tab_lines(&t).0, "cd");
+        assert!(is_shell("-zsh") && is_shell("bash") && !is_shell("python3"));
     }
 
     #[test]

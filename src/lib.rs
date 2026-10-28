@@ -12,6 +12,7 @@ pub mod keys;
 pub mod layout;
 pub mod links;
 pub mod model;
+pub mod process;
 pub mod render;
 pub mod selection;
 pub mod shortcuts;
