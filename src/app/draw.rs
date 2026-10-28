@@ -213,7 +213,7 @@ impl App {
     pub fn panel_area(&self, w: u64) -> Option<Rect> {
         let win = self.wins.get(&w)?;
         let (cw, ch) = plat::content_size(&win.views);
-        Some(Rect::new(0.0, chrome::BAR_H, cw, (ch - chrome::BAR_H).max(0.0)))
+        Some(Rect::new(0.0, win.bar.height, cw, (ch - win.bar.height).max(0.0)))
     }
 
     pub fn draw_window(&mut self, w: u64) {
@@ -451,7 +451,7 @@ impl App {
                     always_close,
                 };
                 chrome::draw_bar(c, &frame, &fonts, &col, scale);
-                let mut strip_y = chrome::BAR_H;
+                let mut strip_y = frame.layout.height;
                 if let Some(n) = reopen {
                     let l = chrome::reopen_layout(cw, strip_y);
                     let text = format!("Reopen {n} {} from last time?", if n == 1 { "tab" } else { "tabs" });
@@ -628,10 +628,10 @@ impl App {
     pub fn chrome_hit(&self, w: u64, x: f64, y: f64) -> Hit {
         let Some(win) = self.wins.get(&w) else { return Hit::Term };
         let (cw, ch) = plat::content_size(&win.views);
-        if y < chrome::BAR_H {
+        if y < win.bar.height {
             return win.bar.hit(x, y);
         }
-        let mut strip_y = chrome::BAR_H;
+        let mut strip_y = win.bar.height;
         if win.reopen_offer.is_some() {
             if let Some(h) = chrome::reopen_layout(cw, strip_y).hit(x, y) {
                 return h;

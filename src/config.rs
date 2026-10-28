@@ -29,6 +29,9 @@ pub struct AppConfig {
     /// macOS: tabs share the title bar with the window's buttons (off: a normal title bar, the
     /// tabs under it).
     pub tabs_in_titlebar: bool,
+    /// Each tab shows "name — folder" on one line, in a tab bar as short as macOS's own title bar
+    /// (off: the name over the folder, in a taller bar).
+    pub one_line_tabs: bool,
     /// What a click on the tab bar's + does: `menu` (the menu of choices), or one of its choices
     /// at once: `new_tab`, `new_window`, `reopen_tab`, or `top_starter` (the first "Start a tab
     /// with…" choice, else a new tab). A right-click always shows the menu.
@@ -55,6 +58,7 @@ impl Default for AppConfig {
             cursor: "block".into(),
             cursor_blink: false,
             tabs_in_titlebar: true,
+            one_line_tabs: false,
             plus_button: "menu".into(),
             always_show_tab_close: false,
             keys: BTreeMap::new(),
@@ -163,6 +167,7 @@ confirm_multiline_paste = true
 cursor = "block"            # block | bar | underline
 cursor_blink = false
 tabs_in_titlebar = true     # macOS: tabs share the title bar with the window's buttons
+one_line_tabs = false       # true: "name — folder" on one line, in a bar as short as a title bar
 plus_button = "menu"        # the + in the tab bar: menu, new_tab, new_window, reopen_tab or top_starter
 always_show_tab_close = false   # true: every tab shows its close button, so titles don't shift on hover
 
@@ -193,6 +198,7 @@ mod tests {
         assert_eq!(l.app.cursor_shape(), CursorShape::Bar);
         assert_eq!(l.app.keys.get("new_tab").map(String::as_str), Some("cmd-shift-t"));
         assert!(parse("[app]\ncursor = \"triangle\"").problem.is_some());
+        assert!(parse("[app]\none_line_tabs = true").app.one_line_tabs);
         let l = parse("[app]\nnew_window_theme = \"random\"\nrandom_themes = [\"jet\", \"plum\"]\n");
         assert_eq!(l.problem, None);
         assert_eq!(l.app.new_window_theme, "random");
