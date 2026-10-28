@@ -468,6 +468,11 @@ impl UiFont {
     pub fn height(&self) -> f64 {
         (self.ascent + self.descent).ceil()
     }
+
+    /// From the top of a line to its baseline, in pixels (as `text` draws it).
+    pub fn ascent(&self) -> f64 {
+        self.ascent.round()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

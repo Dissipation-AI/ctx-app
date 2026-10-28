@@ -435,7 +435,7 @@ impl App {
             ..MenuItem::new("Reopen Closed Tab", MenuAction::Perform(Action::ReopenTab))
         });
         let _ = y;
-        self.open_menu(w, Menu::new(x - 10.0, chrome::BAR_H - 2.0, items));
+        self.open_menu(w, Menu::new(x - 10.0, chrome::bar_height(self.loaded.app.one_line_tabs) - 2.0, items));
     }
 
     /// Ask the server for starters (the menu shows what it has until the answer comes).
