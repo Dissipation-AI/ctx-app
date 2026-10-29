@@ -152,13 +152,9 @@ impl App {
                     label,
                     path,
                     title: t.title.clone(),
-                    agent: (t.opened_by != "you").then(|| super::agent_name(&t.opened_by)).or_else(|| {
-                        t.running
-                            .as_deref()
-                            .map(super::program_of)
-                            .filter(|p| super::AGENTS.contains(p))
-                            .map(str::to_string)
-                    }),
+                    agent: (t.opened_by != "you")
+                        .then(|| super::agent_name(&t.opened_by))
+                        .or_else(|| super::running_program(t).filter(|p| super::AGENTS.contains(&p.as_str()))),
                     launcher: t.permissions_of.clone(),
                     badge,
                     selected: focused == Some(t.number) || (!has_tiles && selected == Some(t.number)),
