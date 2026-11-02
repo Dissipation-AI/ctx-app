@@ -283,6 +283,8 @@ pub struct BarFrame<'a> {
     pub width: f64,
     /// Every tab shows its close button, not only the one under the pointer.
     pub always_close: bool,
+    /// The button whose panel is showing.
+    pub open: Option<Button>,
 }
 
 fn px(r: Rect, s: f64) -> Rect {
@@ -381,10 +383,13 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
     // Overview, History, Activity.
     for (b, r) in &f.layout.buttons {
         let r = px(*r, s);
-        if f.hover == Some(Hit::Button(*b)) {
+        let open = f.open == Some(*b);
+        if open {
+            c.fill_rounded(col.accent, 0.28, r.x + 2.0 * s, r.y, r.w - 4.0 * s, r.h, [7.0 * s; 4]);
+        } else if f.hover == Some(Hit::Button(*b)) {
             c.fill_rounded(col.hover, 1.0, r.x + 2.0 * s, r.y, r.w - 4.0 * s, r.h, [7.0 * s; 4]);
         }
-        draw_icon(c, *b, r, col.dim, s);
+        draw_icon(c, *b, r, if open { col.accent } else { col.dim }, s);
     }
 }
 

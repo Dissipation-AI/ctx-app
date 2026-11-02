@@ -337,6 +337,15 @@ impl App {
                     self.open_panel(w, Kind::Activity);
                     return;
                 }
+                // With a panel open, a click on a tab leaves the panel for that tab (the one the panel
+                // opened over too: it isn't the panel).
+                if self.wins.get(&w).is_some_and(|x| x.panel.is_some()) {
+                    self.close_panel(w);
+                    if self.focused_tab(w) != Some(tab) {
+                        self.select_tab(w, tab);
+                    }
+                    return;
+                }
                 if clicks == 2 {
                     self.rename_dialog(tab);
                     return;
