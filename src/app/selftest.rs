@@ -532,6 +532,9 @@ pub fn start() {
         let w = r.window;
         let Some(t) = app.focused_tab(w) else { return r.check(false, "a tab is focused") };
         app.state.tab_themes.insert(t, "jet".into());
+        // In view, to be clicked (earlier steps may have scrolled the bar away from it).
+        app.select_tab(w, t);
+        app.layout(w);
         let button =
             app.wins.get(&w).and_then(|x| x.bar.buttons.iter().find(|b| b.0 == chrome::Button::Overview)).map(|b| b.1);
         if let Some(b) = button {
