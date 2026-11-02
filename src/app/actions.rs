@@ -953,6 +953,50 @@ impl App {
         });
     }
 
+    /// Once, at the first launch: if your zsh shares ↑ history between tabs as commands run, offer
+    /// (in a bar under the tab bar) to keep it per tab. zsh is asked off the main thread.
+    pub fn maybe_offer_history(&mut self) {
+        if self.state.history_checked {
+            return;
+        }
+        std::thread::spawn(|| {
+            let found = crate::zsh_history::check(&crate::zsh_history::login_shell());
+            plat::post_from_any_thread(Box::new(move || {
+                super::with_app(|app| {
+                    let Some(f) = found.clone().filter(|f| f.shares) else {
+                        // Not zsh, or nothing shared. (No answer: ask again next launch.)
+                        if found.is_some() {
+                            app.state.history_checked = true;
+                            app.save_state();
+                        }
+                        return;
+                    };
+                    if let Some(w) = app.key_window().or_else(|| app.wins.keys().next().copied())
+                        && let Some(win) = app.wins.get_mut(&w)
+                    {
+                        win.history_offer = Some(f.zshrc);
+                        app.layout(w);
+                        app.dirty_win(w);
+                        app.redraw_dirty();
+                    }
+                });
+            }));
+        });
+    }
+
+    /// The history bar answered: `keep` adds per-tab history to the `.zshrc`; × only closes it.
+    pub fn history_offer(&mut self, w: u64, keep: bool) {
+        let Some(zshrc) = self.wins.get_mut(&w).and_then(|win| win.history_offer.take()) else { return };
+        self.state.history_checked = true;
+        self.save_state();
+        if keep && let Err(e) = crate::zsh_history::keep_per_tab(&zshrc) {
+            self.alert(&format!("Couldn't change {}", zshrc.display()), &e.to_string());
+        }
+        self.layout(w);
+        self.dirty_win(w);
+        self.redraw_dirty();
+    }
+
     pub fn reopen_offer(&mut self, w: u64, accept: bool) {
         let tabs = self.wins.get_mut(&w).and_then(|win| win.reopen_offer.take()).unwrap_or_default();
         if accept {

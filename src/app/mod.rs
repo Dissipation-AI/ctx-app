@@ -315,6 +315,8 @@ pub struct Win {
     pub reopen_offer: Option<Vec<u64>>,
     /// Several lines waiting to be pasted at a prompt: the tab and the text.
     pub paste_offer: Option<(u64, String)>,
+    /// The bar offering per-tab ↑ history: the `.zshrc` it would change.
+    pub history_offer: Option<std::path::PathBuf>,
     /// A divider being dragged: its path in the tile tree.
     pub dragging_divider: Option<Vec<bool>>,
     /// A selection being dragged: which tab.
@@ -925,6 +927,7 @@ impl App {
             }
             self.known_windows = windows.iter().copied().collect();
             self.maybe_offer_reopen();
+            self.maybe_offer_history();
         } else {
             for w in &self.list.windows {
                 if !self.known_windows.contains(&w.number) {
@@ -1106,6 +1109,7 @@ impl App {
             focus: Focus::Term,
             reopen_offer: None,
             paste_offer: None,
+            history_offer: None,
             dragging_divider: None,
             selecting: None,
             hover_link: None,
@@ -1477,6 +1481,9 @@ impl App {
         let scroll = bar.tabs.first().map(|(_, r)| (bar.strip.x - r.x).max(0.0)).unwrap_or(0.0);
         let mut top = bar.height;
         if win.reopen_offer.is_some() {
+            top += chrome::STRIP_H;
+        }
+        if win.history_offer.is_some() {
             top += chrome::STRIP_H;
         }
         if win.paste_offer.is_some() {

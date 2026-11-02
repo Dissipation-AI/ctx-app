@@ -124,6 +124,8 @@ pub enum Hit {
     ReopenNo,
     PasteYes,
     PasteNo,
+    HistoryKeep,
+    HistoryClose,
 }
 
 /// Where a tab's activity badge is (a click there opens Activity), in points.
@@ -816,6 +818,73 @@ pub fn draw_reopen<C: Canvas>(
     draw_button(c, l.no, "Not Now", &fonts.label, col, s, hover == Some(Hit::ReopenNo), false);
 }
 
+/// The bar offering to stop zsh sharing ↑ history live between tabs: a button and a close ×.
+pub struct HistoryLayout {
+    pub bar: Rect,
+    pub keep: Rect,
+    pub close: Rect,
+}
+
+pub fn history_layout(w: f64, y: f64) -> HistoryLayout {
+    HistoryLayout {
+        bar: Rect::new(0.0, y, w, STRIP_H),
+        keep: Rect::new(w - 188.0, y + 5.0, 146.0, STRIP_H - 10.0),
+        close: Rect::new(w - 34.0, y + (STRIP_H - 22.0) / 2.0, 22.0, 22.0),
+    }
+}
+
+impl HistoryLayout {
+    pub fn hit(&self, x: f64, y: f64) -> Option<Hit> {
+        if !self.bar.contains(x, y) {
+            return None;
+        }
+        Some(if self.keep.contains(x, y) {
+            Hit::HistoryKeep
+        } else if self.close.contains(x, y) {
+            Hit::HistoryClose
+        } else {
+            Hit::Term
+        })
+    }
+}
+
+pub const HISTORY_OFFER: &str = "Your tabs share ↑ history as commands run (zsh's share_history), so other tabs' and agents' commands turn up in yours.";
+
+pub fn draw_history<C: Canvas>(
+    c: &mut C,
+    l: &HistoryLayout,
+    hover: Option<Hit>,
+    fonts: &ChromeFonts,
+    col: &Colors,
+    s: f64,
+) {
+    let b = px(l.bar, s);
+    c.fill(mix(col.bar, col.accent, 0.12), 1.0, b.x, b.y, b.w, b.h);
+    c.fill(col.line, 1.0, b.x, b.y + b.h - s.max(1.0), b.w, s.max(1.0));
+    c.text(
+        &fonts.label,
+        HISTORY_OFFER,
+        b.x + 12.0 * s,
+        b.y + (b.h - fonts.label.height()) / 2.0,
+        (l.keep.x - 20.0) * s,
+        col.text,
+        Trunc::Tail,
+    );
+    draw_button(c, l.keep, "Keep History Per Tab", &fonts.label, col, s, hover == Some(Hit::HistoryKeep), true);
+    let cr = px(l.close, s);
+    if hover == Some(Hit::HistoryClose) {
+        c.fill_rounded(col.hover, 1.0, cr.x, cr.y, cr.w, cr.h, [4.0 * s; 4]);
+    }
+    let (cx, cy, a) = (cr.x + cr.w / 2.0, cr.y + cr.h / 2.0, 4.0 * s);
+    let path = [
+        PathOp::Move(cx - a, cy - a),
+        PathOp::Line(cx + a, cy + a),
+        PathOp::Move(cx + a, cy - a),
+        PathOp::Line(cx - a, cy + a),
+    ];
+    c.stroke(&path, 1.4 * s, col.dim, 1.0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -887,6 +956,11 @@ mod tests {
         assert_eq!(f.hit(3.0, 10.0), None);
         let r = reopen_layout(800.0, 40.0);
         assert_eq!(r.hit(r.yes.x + 1.0, r.yes.y + 1.0), Some(Hit::ReopenYes));
+        let h = history_layout(800.0, 40.0);
+        assert_eq!(h.hit(h.keep.x + 1.0, h.keep.y + 1.0), Some(Hit::HistoryKeep));
+        assert_eq!(h.hit(h.close.x + 11.0, h.close.y + 11.0), Some(Hit::HistoryClose));
+        assert_eq!(h.hit(10.0, 50.0), Some(Hit::Term));
+        assert!(h.keep.x + h.keep.w < h.close.x && h.hit(10.0, 80.0).is_none());
         assert_eq!(paste_preview("echo a\necho b\n"), "Paste 2 lines?   echo a  ⏎  echo b");
     }
 }

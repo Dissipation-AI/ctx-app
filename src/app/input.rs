@@ -439,6 +439,10 @@ impl App {
                 self.reopen_offer(w, hit == Hit::ReopenYes);
                 return;
             }
+            Hit::HistoryKeep | Hit::HistoryClose => {
+                self.history_offer(w, hit == Hit::HistoryKeep);
+                return;
+            }
             Hit::PasteYes | Hit::PasteNo => {
                 self.paste_offer(w, hit == Hit::PasteYes);
                 return;
