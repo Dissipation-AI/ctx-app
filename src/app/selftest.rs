@@ -132,6 +132,10 @@ pub fn start() {
         r.window = app.wins.keys().next().copied().unwrap_or(0);
         r.tab = app.focused_tab(r.window).unwrap_or(0);
         r.check(r.window != 0 && r.tab != 0, "a window with a tab is shown");
+        r.check(
+            app.wins.len() == 1 && !app.wins.contains_key(&super::PLACEHOLDER),
+            "the window shown at launch became that window (not a second one)",
+        );
         if let Some(win) = app.wins.get(&r.window) {
             plat::show_window(&win.views, true);
         }
@@ -526,6 +530,36 @@ pub fn start() {
         if let Some(t) = app.focused_tab(r.window) {
             app.input(t, ctx_protocol::AppInput::Key { key: "ctrl-c".into(), text: None });
         }
+    }));
+    // Banners: one at a time under the bar, never a dialog; answering shows the next.
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        let top = |app: &App| app.wins.get(&w).map(|x| x.term_rect.y).unwrap_or(0.0);
+        let bare = top(app);
+        let answer = std::rc::Rc::new(std::cell::Cell::new(None));
+        let heard = answer.clone();
+        app.alert("There's a problem in the config file", "line 3: no such setting");
+        app.ask("Close this tab?", "It's running sleep.", "Close", "Cancel", move |_, yes| heard.set(Some(yes)));
+        r.check(app.wins.get(&w).is_some_and(|x| x.dialog.is_none()), "alerts and questions are banners, not dialogs");
+        r.check(
+            app.banners.len() == 2 && (top(app) - bare - chrome::STRIP_H).abs() < 0.5,
+            "two banners take one strip: they show one at a time",
+        );
+        app.answer_banner(None);
+        r.check(
+            app.banners.front().is_some_and(|b| b.text.starts_with("Close this tab")),
+            "closing one shows the next",
+        );
+        // Its first button, clicked where it's drawn.
+        let (cw, y) = app
+            .wins
+            .get(&w)
+            .map(|x| (x.bar.buttons.last().map(|b| b.1.x + b.1.w + 6.0).unwrap_or(800.0), x.bar.height))
+            .unwrap_or((800.0, 40.0));
+        let l = super::banner::layout(cw, y, &["Close".into(), "Cancel".into()]);
+        click_at(app, w, l.buttons[0].x + 4.0, l.buttons[0].y + 4.0, 1, 1);
+        r.check(answer.get() == Some(true) && app.banners.is_empty(), "clicking its button answers it");
+        r.check((top(app) - bare).abs() < 0.5, "and with none left, the strip goes");
     }));
     run(steps, Report::default());
 }

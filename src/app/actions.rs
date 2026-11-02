@@ -826,6 +826,12 @@ impl App {
     pub fn tick(&mut self) {
         self.blink_on = !self.blink_on;
         let mut need = false;
+        if self.loading() {
+            for w in self.wins.values_mut() {
+                w.chrome_dirty = true;
+            }
+            need = true;
+        }
         for w in self.wins.values_mut() {
             if !w.visible || !w.key {
                 continue;
@@ -926,30 +932,33 @@ impl App {
         if self.loaded.reopen_on_launch != "ask" {
             return;
         }
-        self.request("ctx list closed tabs", Request::ListClosedTabs { limit: 100 }, |app, r| {
+        // Agents' tabs only if you kept their window on screen: they go back into it, not yours.
+        let agents = self.state.agent_window_shown;
+        self.request("ctx list closed tabs", Request::ListClosedTabs { limit: 100 }, move |app, r| {
             let Response::Ok(Output::ClosedTabs(c)) = r else { return };
             let open: Vec<u64> = app.list.windows.iter().flat_map(|w| w.tabs.iter().map(|t| t.number)).collect();
-            let tabs: Vec<u64> = c
+            let ended: Vec<&ClosedTab> = c
                 .tabs
                 .iter()
                 .filter(|t| {
                     t.ended == "interrupted" && !open.contains(&t.number) && !app.state.offered.contains(&t.number)
                 })
-                .map(|t| t.number)
                 .collect();
+            let tabs: Vec<u64> = ended.iter().filter(|t| t.opened_by == "you" || agents).map(|t| t.number).collect();
+            app.state.offered.extend(ended.iter().map(|t| t.number));
+            app.save_state();
             if tabs.is_empty() {
                 return;
             }
-            app.state.offered.extend(tabs.iter().copied());
-            app.save_state();
-            if let Some(w) = app.key_window().or_else(|| app.wins.keys().next().copied()) {
-                if let Some(win) = app.wins.get_mut(&w) {
-                    win.reopen_offer = Some(tabs);
+            let n = tabs.len();
+            let text = format!("Reopen {n} {} from last time?", if n == 1 { "tab" } else { "tabs" });
+            app.banner(text, &["Reopen"], false, move |app, b| {
+                if b == Some(0) {
+                    for t in tabs {
+                        app.reopen(t);
+                    }
                 }
-                app.layout(w);
-                app.dirty_win(w);
-                app.redraw_dirty();
-            }
+            });
         });
     }
 
@@ -971,44 +980,22 @@ impl App {
                         }
                         return;
                     };
-                    if let Some(w) = app.key_window().or_else(|| app.wins.keys().next().copied())
-                        && let Some(win) = app.wins.get_mut(&w)
-                    {
-                        win.history_offer = Some(f.zshrc);
-                        app.layout(w);
-                        app.dirty_win(w);
-                        app.redraw_dirty();
-                    }
+                    app.banner(HISTORY_OFFER, &["Keep History Per Tab"], false, move |app, b| {
+                        app.state.history_checked = true;
+                        app.save_state();
+                        if b == Some(0)
+                            && let Err(e) = crate::zsh_history::keep_per_tab(&f.zshrc)
+                        {
+                            app.alert(&format!("Couldn't change {}", f.zshrc.display()), &e.to_string());
+                        }
+                    });
                 });
             }));
         });
     }
-
-    /// The history bar answered: `keep` adds per-tab history to the `.zshrc`; × only closes it.
-    pub fn history_offer(&mut self, w: u64, keep: bool) {
-        let Some(zshrc) = self.wins.get_mut(&w).and_then(|win| win.history_offer.take()) else { return };
-        self.state.history_checked = true;
-        self.save_state();
-        if keep && let Err(e) = crate::zsh_history::keep_per_tab(&zshrc) {
-            self.alert(&format!("Couldn't change {}", zshrc.display()), &e.to_string());
-        }
-        self.layout(w);
-        self.dirty_win(w);
-        self.redraw_dirty();
-    }
-
-    pub fn reopen_offer(&mut self, w: u64, accept: bool) {
-        let tabs = self.wins.get_mut(&w).and_then(|win| win.reopen_offer.take()).unwrap_or_default();
-        if accept {
-            for t in tabs {
-                self.reopen(t);
-            }
-        }
-        self.layout(w);
-        self.dirty_win(w);
-        self.redraw_dirty();
-    }
 }
+
+const HISTORY_OFFER: &str = "Your tabs share ↑ history as commands run (zsh's share_history), so other tabs' and agents' commands turn up in yours.";
 
 fn outside_about() {
     super::outside(plat::about);

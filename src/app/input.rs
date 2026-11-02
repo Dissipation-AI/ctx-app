@@ -204,7 +204,12 @@ impl App {
             Focus::Term if win.panel.is_some() => return,
             Focus::Term => {}
         }
-        let Some(tab) = self.focused_tab(w) else { return };
+        let Some(tab) = self.focused_tab(w) else {
+            if self.loading() {
+                self.early_text.push_str(text);
+            }
+            return;
+        };
         let composing = self.views.get_mut(&tab).is_some_and(|v| v.marked.take().is_some());
         self.go_live(tab);
         // Enter from an input method arrives as text.
@@ -435,14 +440,15 @@ impl App {
                 self.close_find(w);
                 return;
             }
-            Hit::ReopenYes | Hit::ReopenNo => {
-                self.reopen_offer(w, hit == Hit::ReopenYes);
+            Hit::BannerButton(i) => {
+                self.answer_banner(Some(i));
                 return;
             }
-            Hit::HistoryKeep | Hit::HistoryClose => {
-                self.history_offer(w, hit == Hit::HistoryKeep);
+            Hit::BannerClose => {
+                self.answer_banner(None);
                 return;
             }
+            Hit::ReopenYes | Hit::ReopenNo => return,
             Hit::PasteYes | Hit::PasteNo => {
                 self.paste_offer(w, hit == Hit::PasteYes);
                 return;

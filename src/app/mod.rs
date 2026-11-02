@@ -8,6 +8,7 @@
 //! windows, shows their buffers, and turns the window system's events into calls on [`App`].
 
 pub mod actions;
+pub mod banner;
 pub mod chrome;
 pub mod draw;
 pub mod input;
@@ -58,6 +59,9 @@ thread_local! {
 }
 
 /// Run `f` with the app, or `None` if it's already in use further up the stack.
+/// The window number of the window shown at launch, before the server's first tab list.
+pub const PLACEHOLDER: u64 = u64::MAX;
+
 pub fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
     APP.with(|a| match a.try_borrow_mut() {
         Ok(mut g) => {
@@ -312,11 +316,8 @@ pub struct Win {
     pub drop_hint: Option<Rect>,
     pub find: Option<FindBar>,
     pub focus: Focus,
-    pub reopen_offer: Option<Vec<u64>>,
     /// Several lines waiting to be pasted at a prompt: the tab and the text.
     pub paste_offer: Option<(u64, String)>,
-    /// The bar offering per-tab ↑ history: the `.zshrc` it would change.
-    pub history_offer: Option<std::path::PathBuf>,
     /// A divider being dragged: its path in the tile tree.
     pub dragging_divider: Option<Vec<bool>>,
     /// A selection being dragged: which tab.
@@ -380,6 +381,10 @@ pub struct App {
     /// Where a plain click landed (a drag from it starts a selection).
     pub pending_anchor: Option<(u64, Point)>,
     pub offer_reopen_later: bool,
+    /// What CTX tells or asks, shown one at a time under the tab bar.
+    pub banners: std::collections::VecDeque<banner::Banner>,
+    /// Typed into the window shown before the server answered: goes to the first tab.
+    pub early_text: String,
     /// After a move to another window: select the tab there.
     pub want_select_after_move: Option<(u64, u64)>,
     /// After a move to another window: tile it there (window, tab, next to, edge).
@@ -458,6 +463,8 @@ pub fn launched() {
         watcher: None,
         pending_anchor: None,
         offer_reopen_later: false,
+        banners: Default::default(),
+        early_text: String::new(),
         want_select_after_move: None,
         pending_tile: None,
         selftest_started: false,
@@ -476,6 +483,7 @@ pub fn launched() {
         processes_at: None,
     };
     APP.with(|a| *a.borrow_mut() = Some(app));
+    with_app(|app| app.open_placeholder());
     with_app(|app| {
         app.rebuild_menus();
         app.watcher = plat::watch::Watcher::start(&app.config_path);
@@ -529,22 +537,23 @@ fn connected(result: Result<(Client, Receiver<Event>), ConnectError>) {
                 app.offer_reopen_later = true;
             });
         }
-        Err(e) => {
-            let msg = match e {
-                ConnectError::NoServer(m) | ConnectError::Mismatch(m) => m,
-            };
-            let ask = with_app(|app| {
-                app.ask("CTX can't reach the ctx server", &msg, "Try Again", "Quit", |_, again| {
-                    if again {
-                        later(|_| connect());
-                    } else {
-                        plat::terminate();
+        Err(ConnectError::Mismatch(msg)) => {
+            with_app(|app| {
+                app.banner(msg, &["Restart Server"], true, |app, b| {
+                    if b == Some(0) {
+                        app.restart_server();
                     }
                 })
             });
-            if ask.is_none() {
-                plat::terminate();
-            }
+        }
+        Err(ConnectError::NoServer(msg)) => {
+            with_app(|app| {
+                app.banner(format!("CTX can't reach the ctx server: {msg}"), &["Try Again"], true, |_, b| {
+                    if b == Some(0) {
+                        later(|_| connect());
+                    }
+                })
+            });
         }
     }
 }
@@ -743,11 +752,9 @@ impl App {
                 } else {
                     with_app(|app| {
                         app.reconnecting = false;
-                        app.ask("Lost the ctx server", &why, "Reconnect", "Quit", |_, again| {
-                            if again {
+                        app.banner(format!("Lost the ctx server: {why}"), &["Reconnect"], true, |_, b| {
+                            if b == Some(0) {
                                 later(|_| connect());
-                            } else {
-                                plat::terminate();
                             }
                         });
                     });
@@ -934,7 +941,9 @@ impl App {
                     new_windows.push(w.number);
                     let ours = self.want_shown.remove(&w.number);
                     let dropped = self.drop_at.is_some_and(|(t, _, _)| w.tabs.iter().any(|x| x.number == t));
-                    if ours || dropped || !self.is_agent_window(w) {
+                    // The Agents window shows again (reopened tabs) only if you had it on screen.
+                    let agents = self.is_agent_window(w);
+                    if ours || dropped || !agents || self.state.agent_window_shown {
                         show.push(w.number);
                     }
                 }
@@ -943,6 +952,21 @@ impl App {
         }
         for w in show {
             self.open_win(w);
+        }
+        if let Some(a) = self.list.windows.iter().find(|w| self.is_agent_window(w)).map(|w| w.number) {
+            let shown = self.wins.contains_key(&a);
+            if shown != self.state.agent_window_shown {
+                self.state.agent_window_shown = shown;
+                self.save_state();
+            }
+        }
+        // Typed before there was a tab: to the first one.
+        if !self.early_text.is_empty()
+            && let Some(t) =
+                self.key_window().or_else(|| self.wins.keys().next().copied()).and_then(|w| self.focused_tab(w))
+        {
+            let text = std::mem::take(&mut self.early_text);
+            self.input(t, AppInput::Text(text));
         }
         self.theme_new(&new_windows, &new_tabs);
         // Services that launched the app (or came before it connected); a new window is the one
@@ -958,7 +982,7 @@ impl App {
             plat::after(1500, Box::new(selftest::start));
         }
         // Windows that went away.
-        let gone: Vec<u64> = self.wins.keys().copied().filter(|w| !windows.contains(w)).collect();
+        let gone: Vec<u64> = self.wins.keys().copied().filter(|w| *w != PLACEHOLDER && !windows.contains(w)).collect();
         for w in gone {
             if let Some(win) = self.wins.remove(&w) {
                 plat::close_window(&win.views);
@@ -1070,6 +1094,9 @@ impl App {
         if self.wins.contains_key(&n) {
             return;
         }
+        if n != PLACEHOLDER && self.adopt_placeholder(n) {
+            return;
+        }
         let saved = self.state.windows.get(&n).cloned().unwrap_or_default();
         let theme_name = saved.theme.clone();
         let info_tabs: Vec<u64> =
@@ -1107,9 +1134,7 @@ impl App {
             drop_hint: None,
             find: None,
             focus: Focus::Term,
-            reopen_offer: None,
             paste_offer: None,
-            history_offer: None,
             dragging_divider: None,
             selecting: None,
             hover_link: None,
@@ -1127,6 +1152,47 @@ impl App {
         self.layout(n);
         self.update_subscriptions();
         self.save_state();
+    }
+
+    /// A window at launch, before the server answers (starting it can take a moment): a spinner in
+    /// its bar, and typing kept for the first tab. Where the last window was, in its theme.
+    pub fn open_placeholder(&mut self) {
+        if !self.wins.is_empty() {
+            return;
+        }
+        if let Some(s) = self.state.windows.values().next().cloned() {
+            self.state.windows.insert(PLACEHOLDER, crate::state::WindowState { tiles: None, selected: None, ..s });
+        }
+        self.open_win(PLACEHOLDER);
+        self.ensure_ticker();
+    }
+
+    /// The first window to show takes over the one shown at launch, rather than another opening.
+    fn adopt_placeholder(&mut self, n: u64) -> bool {
+        let Some(mut win) = self.wins.remove(&PLACEHOLDER) else { return false };
+        plat::renumber(&win.views, n);
+        let shown = self.state.windows.remove(&PLACEHOLDER).unwrap_or_default();
+        let saved = self.state.windows.get(&n).cloned().unwrap_or(shown);
+        let tabs: Vec<u64> = self.window_info(n).map(|w| w.tabs.iter().map(|t| t.number).collect()).unwrap_or_default();
+        let selected = saved.selected.filter(|t| tabs.contains(t)).or(tabs.first().copied());
+        win.number = n;
+        win.selected = selected;
+        win.focused = selected;
+        win.tiles = saved.tiles.clone();
+        win.theme_name = saved.theme.clone().or(win.theme_name);
+        win.dirty = Some(Dirty::All);
+        win.chrome_dirty = true;
+        self.wins.insert(n, win);
+        self.state.windows.insert(n, saved);
+        self.layout(n);
+        self.update_subscriptions();
+        self.save_state();
+        true
+    }
+
+    /// Whether the app is still waiting for the server's first tab list.
+    pub fn loading(&self) -> bool {
+        self.client.is_none() || self.first_list
     }
 
     /// Bring a tab forward: open its window if needed and select it. `activate`: also make the
@@ -1263,6 +1329,12 @@ impl App {
     }
 
     pub fn close_window(&mut self, w: u64, without_asking: bool) {
+        if w == PLACEHOLDER {
+            if let Some(win) = self.wins.remove(&w) {
+                plat::close_window(&win.views);
+            }
+            return;
+        }
         let r = Request::CloseWindow { window: WindowRef::Number(w), without_asking };
         self.request(&format!("ctx close window {w}"), r, move |app, r| {
             if let Response::Error(e) = r {
@@ -1332,6 +1404,20 @@ impl App {
             if let Response::Error(e) = r {
                 app.error(&e.message);
             }
+        });
+    }
+
+    /// Restart a server of another version (so the app can talk to it), off the main thread:
+    /// what `ctx restart server without asking` does. Then connect.
+    pub fn restart_server(&mut self) {
+        std::thread::spawn(|| {
+            let r = crate::client::restart_mismatched();
+            plat::post_from_any_thread(Box::new(move || match r {
+                Ok(()) => connect(),
+                Err(e) => {
+                    with_app(|app| app.alert("Couldn't restart the ctx server", &e));
+                }
+            }));
         });
     }
 
@@ -1480,10 +1566,7 @@ impl App {
         }
         let scroll = bar.tabs.first().map(|(_, r)| (bar.strip.x - r.x).max(0.0)).unwrap_or(0.0);
         let mut top = bar.height;
-        if win.reopen_offer.is_some() {
-            top += chrome::STRIP_H;
-        }
-        if win.history_offer.is_some() {
+        if !self.banners.is_empty() {
             top += chrome::STRIP_H;
         }
         if win.paste_offer.is_some() {
@@ -1635,14 +1718,15 @@ impl App {
     // Alerts and questions
     // -----------------------------------------------------------------------------------------
 
-    /// Tell the person something (a native alert on macOS, a drawn one elsewhere).
+    /// Tell the person something, in a banner.
     pub fn alert(&mut self, title: &str, text: &str) {
-        self.ask_with(title, text, vec!["OK".into()], None, |_, _, _| {});
+        self.banner(said(title, text), &[], true, |_, _| {});
     }
 
-    /// A question with two buttons; `then` gets true for the first.
+    /// A question, in a banner with its two buttons; `then` gets true for the first (the second,
+    /// or the ×, is false).
     pub fn ask(&mut self, title: &str, text: &str, yes: &str, no: &str, then: impl FnOnce(&mut App, bool) + 'static) {
-        self.ask_with(title, text, vec![yes.into(), no.into()], None, move |app, b, _| then(app, b == Some(0)));
+        self.banner(said(title, text), &[yes, no], true, move |app, b| then(app, b == Some(0)));
     }
 
     /// Ask for a line of text.
@@ -1725,6 +1809,12 @@ impl App {
 
 /// When the selected tab closes, the tab that took its place: the one after it, else the one
 /// before it, else the first.
+/// A banner's text: the title, then what it's about.
+fn said(title: &str, text: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() { title.to_string() } else { format!("{}: {text}", title.trim_end_matches('?')) }
+}
+
 pub fn neighbour_after_close(old: &[u64], now: &[u64], selected: Option<u64>) -> Option<u64> {
     if let Some(s) = selected
         && let Some(i) = old.iter().position(|t| *t == s)
