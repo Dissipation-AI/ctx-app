@@ -124,8 +124,8 @@ pub enum Hit {
     ReopenNo,
     PasteYes,
     PasteNo,
-    HistoryKeep,
-    HistoryClose,
+    BannerButton(usize),
+    BannerClose,
 }
 
 /// Where a tab's activity badge is (a click there opens Activity), in points.
@@ -285,6 +285,8 @@ pub struct BarFrame<'a> {
     pub width: f64,
     /// Every tab shows its close button, not only the one under the pointer.
     pub always_close: bool,
+    /// Not connected to the server yet: a spinner where the tabs go.
+    pub loading: bool,
 }
 
 fn px(r: Rect, s: f64) -> Rect {
@@ -343,6 +345,28 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
         }
     }
     c.clip(None);
+    if f.loading && f.items.is_empty() {
+        let (cx, cy, rad) = (strip.x + 18.0 * s, bar.h / 2.0, 6.0 * s);
+        let phase = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+            / 125
+            % 8) as usize;
+        for i in 0..8 {
+            let a = i as f64 * std::f64::consts::TAU / 8.0;
+            let d = 2.4 * s;
+            let fade = ((i + 8 - phase) % 8) as f64 / 8.0;
+            c.fill_rounded(
+                col.dim,
+                1.0 - fade * 0.8,
+                cx + rad * a.cos() - d / 2.0,
+                cy + rad * a.sin() - d / 2.0,
+                d,
+                d,
+                [d / 2.0; 4],
+            );
+        }
+        let ty = (bar.h - fonts.label.height()) / 2.0;
+        c.text(&fonts.label, "Starting ctx…", cx + rad + 10.0 * s, ty, strip.w, col.dim, Trunc::Tail);
+    }
     // Overflow chevrons.
     for (r, glyph, h) in [(f.layout.left, "‹", Hit::ScrollLeft), (f.layout.right, "›", Hit::ScrollRight)] {
         if let Some(r) = r {
@@ -792,99 +816,6 @@ pub fn draw_paste<C: Canvas>(
     draw_button(c, l.no, "Cancel", &fonts.label, col, s, hover == Some(Hit::PasteNo), false);
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn draw_reopen<C: Canvas>(
-    c: &mut C,
-    l: &ReopenLayout,
-    text: &str,
-    hover: Option<Hit>,
-    fonts: &ChromeFonts,
-    col: &Colors,
-    s: f64,
-) {
-    let b = px(l.bar, s);
-    c.fill(mix(col.bar, col.accent, 0.12), 1.0, b.x, b.y, b.w, b.h);
-    c.fill(col.line, 1.0, b.x, b.y + b.h - s.max(1.0), b.w, s.max(1.0));
-    c.text(
-        &fonts.label,
-        text,
-        b.x + 12.0 * s,
-        b.y + (b.h - fonts.label.height()) / 2.0,
-        (l.yes.x - 20.0) * s,
-        col.text,
-        Trunc::Tail,
-    );
-    draw_button(c, l.yes, "Reopen", &fonts.label, col, s, hover == Some(Hit::ReopenYes), true);
-    draw_button(c, l.no, "Not Now", &fonts.label, col, s, hover == Some(Hit::ReopenNo), false);
-}
-
-/// The bar offering to stop zsh sharing ↑ history live between tabs: a button and a close ×.
-pub struct HistoryLayout {
-    pub bar: Rect,
-    pub keep: Rect,
-    pub close: Rect,
-}
-
-pub fn history_layout(w: f64, y: f64) -> HistoryLayout {
-    HistoryLayout {
-        bar: Rect::new(0.0, y, w, STRIP_H),
-        keep: Rect::new(w - 188.0, y + 5.0, 146.0, STRIP_H - 10.0),
-        close: Rect::new(w - 34.0, y + (STRIP_H - 22.0) / 2.0, 22.0, 22.0),
-    }
-}
-
-impl HistoryLayout {
-    pub fn hit(&self, x: f64, y: f64) -> Option<Hit> {
-        if !self.bar.contains(x, y) {
-            return None;
-        }
-        Some(if self.keep.contains(x, y) {
-            Hit::HistoryKeep
-        } else if self.close.contains(x, y) {
-            Hit::HistoryClose
-        } else {
-            Hit::Term
-        })
-    }
-}
-
-pub const HISTORY_OFFER: &str = "Your tabs share ↑ history as commands run (zsh's share_history), so other tabs' and agents' commands turn up in yours.";
-
-pub fn draw_history<C: Canvas>(
-    c: &mut C,
-    l: &HistoryLayout,
-    hover: Option<Hit>,
-    fonts: &ChromeFonts,
-    col: &Colors,
-    s: f64,
-) {
-    let b = px(l.bar, s);
-    c.fill(mix(col.bar, col.accent, 0.12), 1.0, b.x, b.y, b.w, b.h);
-    c.fill(col.line, 1.0, b.x, b.y + b.h - s.max(1.0), b.w, s.max(1.0));
-    c.text(
-        &fonts.label,
-        HISTORY_OFFER,
-        b.x + 12.0 * s,
-        b.y + (b.h - fonts.label.height()) / 2.0,
-        (l.keep.x - 20.0) * s,
-        col.text,
-        Trunc::Tail,
-    );
-    draw_button(c, l.keep, "Keep History Per Tab", &fonts.label, col, s, hover == Some(Hit::HistoryKeep), true);
-    let cr = px(l.close, s);
-    if hover == Some(Hit::HistoryClose) {
-        c.fill_rounded(col.hover, 1.0, cr.x, cr.y, cr.w, cr.h, [4.0 * s; 4]);
-    }
-    let (cx, cy, a) = (cr.x + cr.w / 2.0, cr.y + cr.h / 2.0, 4.0 * s);
-    let path = [
-        PathOp::Move(cx - a, cy - a),
-        PathOp::Line(cx + a, cy + a),
-        PathOp::Move(cx + a, cy - a),
-        PathOp::Line(cx - a, cy + a),
-    ];
-    c.stroke(&path, 1.4 * s, col.dim, 1.0);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -956,11 +887,6 @@ mod tests {
         assert_eq!(f.hit(3.0, 10.0), None);
         let r = reopen_layout(800.0, 40.0);
         assert_eq!(r.hit(r.yes.x + 1.0, r.yes.y + 1.0), Some(Hit::ReopenYes));
-        let h = history_layout(800.0, 40.0);
-        assert_eq!(h.hit(h.keep.x + 1.0, h.keep.y + 1.0), Some(Hit::HistoryKeep));
-        assert_eq!(h.hit(h.close.x + 11.0, h.close.y + 11.0), Some(Hit::HistoryClose));
-        assert_eq!(h.hit(10.0, 50.0), Some(Hit::Term));
-        assert!(h.keep.x + h.keep.w < h.close.x && h.hit(10.0, 80.0).is_none());
         assert_eq!(paste_preview("echo a\necho b\n"), "Paste 2 lines?   echo a  ⏎  echo b");
     }
 }

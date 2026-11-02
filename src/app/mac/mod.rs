@@ -325,6 +325,12 @@ pub fn dialog(title: &str, text: &str, buttons: &[String], field: Option<&str>) 
     ((chosen < buttons.len()).then_some(chosen), text)
 }
 
+/// The window now shows `ctx` window `n` (the one shown at launch, taken over).
+pub fn renumber(v: &Views, n: u64) {
+    v.delegate.ivars().window.set(n);
+    v.view.ivars().window.set(n);
+}
+
 pub fn alert(title: &str, text: &str) {
     dialog(title, text, &["OK".into()], None);
 }

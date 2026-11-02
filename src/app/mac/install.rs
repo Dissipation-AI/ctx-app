@@ -287,7 +287,7 @@ pub fn first_run_then(then: impl FnOnce() + 'static) {
         if let Some(_lock) = Lock::take(false)
             && let Err(e) = register_agent()
         {
-            super::alert("The ctx server isn't allowed to run yet", &e);
+            super::super::later(move |app| app.alert("The ctx server isn't allowed to run yet", &e));
         }
         let set_up = super::super::with_app(|a| a.state.set_up).unwrap_or(true);
         if !set_up {
@@ -306,12 +306,16 @@ pub fn first_run_then(then: impl FnOnce() + 'static) {
                     link_dir().display(),
                     if names.len() == 1 { "it" } else { "them" }
                 );
-                if super::ask_native("Install the command-line tools?", &q, "Install", "Not Now") {
-                    match install_tools(&missing) {
-                        Ok(m) => super::alert("Command-line tools installed", &m),
-                        Err(e) => super::alert("Couldn't install the command-line tools", &e),
-                    }
-                }
+                super::super::later(move |app| {
+                    app.banner(q, &["Install"], false, move |app, b| {
+                        if b == Some(0) {
+                            match install_tools(&missing) {
+                                Ok(m) => app.banner(m, &[], false, |_, _| {}),
+                                Err(e) => app.alert("Couldn't install the command-line tools", &e),
+                            }
+                        }
+                    })
+                });
             }
             super::super::with_app(|a| {
                 a.state.set_up = true;
