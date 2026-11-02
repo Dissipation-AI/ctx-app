@@ -307,6 +307,9 @@ pub struct Win {
     pub tile_rects: Vec<(u64, Rect)>,
     pub bar: BarLayout,
     pub bar_scroll: f64,
+    /// The tabs and width the bar was last laid out for: when they change, the shown tab is
+    /// scrolled into view.
+    pub bar_seen: (Vec<u64>, f64),
     pub hover: Option<Hit>,
     /// Where a dragged tab would land.
     pub drop_hint: Option<Rect>,
@@ -1100,6 +1103,7 @@ impl App {
             tile_rects: Vec::new(),
             bar: chrome::bar_layout(&[], default_size.0, 8.0, 0.0, one_line),
             bar_scroll: 0.0,
+            bar_seen: (Vec::new(), 0.0),
             hover: None,
             drop_hint: None,
             find: None,
@@ -1464,8 +1468,11 @@ impl App {
         let inset = plat::titlebar_inset(&win.views);
         let one_line = self.loaded.app.one_line_tabs;
         let mut bar = chrome::bar_layout(&ids, cw, inset, win.bar_scroll, one_line);
-        // Keep the shown tab in view (after a relaunch, a resize, a new tab).
-        if let Some(t) = win.focused.or(win.selected) {
+        // Keep the shown tab in view after a relaunch, a resize, a new or closed tab (selecting a
+        // tab scrolls to it too). Not on every layout: scrolling the bar lays it out, and would be
+        // pulled straight back.
+        let changed = win.bar_seen.0 != ids || (win.bar_seen.1 - cw).abs() > 0.5;
+        if changed && let Some(t) = win.focused.or(win.selected) {
             let scroll = bar.scroll_to(t, win.bar_scroll);
             if (scroll - win.bar_scroll).abs() > 0.5 {
                 bar = chrome::bar_layout(&ids, cw, inset, scroll, one_line);
@@ -1503,6 +1510,7 @@ impl App {
         }
         win.bar = bar;
         win.bar_scroll = scroll;
+        win.bar_seen = (ids, cw);
         win.term_rect = area;
         win.tile_rects = rects;
         win.scale = scale;
