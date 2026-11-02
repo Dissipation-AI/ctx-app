@@ -527,6 +527,43 @@ pub fn start() {
             app.input(t, ctx_protocol::AppInput::Key { key: "ctrl-c".into(), text: None });
         }
     }));
+    // More tabs than fit: the bar scrolls all the way to either end, whichever tab is selected.
+    steps.push_back(Box::new(|app, r| {
+        for _ in 0..24 {
+            app.new_tab(r.window);
+        }
+    }));
+    steps.push_back(Box::new(|_, _| {}));
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        let bar = |app: &App| app.wins.get(&w).map(|w| w.bar.clone());
+        let Some(b) = bar(app).filter(|b| b.right.is_some()) else {
+            r.check(false, "24 more tabs overflow the bar");
+            return;
+        };
+        let (first, last) = (b.tabs[0].0, b.tabs[b.tabs.len() - 1].0);
+        let click = |app: &mut App, c: Option<crate::layout::Rect>| {
+            for _ in 0..60 {
+                if let Some(c) = c {
+                    click_at(app, w, c.x + c.w / 2.0, c.y + c.h / 2.0, 1, 1);
+                }
+            }
+        };
+        let fits = |b: &chrome::BarLayout, t: u64| {
+            b.tabs
+                .iter()
+                .find(|x| x.0 == t)
+                .is_some_and(|(_, x)| x.x >= b.strip.x - 0.5 && x.x + x.w <= b.strip.x + b.strip.w + 0.5)
+        };
+        app.select_tab(w, first);
+        click(app, b.right);
+        let after = bar(app).unwrap();
+        r.check(fits(&after, last) && !fits(&after, first), "with the first tab selected, the bar scrolls to the last");
+        app.select_tab(w, last);
+        click(app, b.left);
+        let after = bar(app).unwrap();
+        r.check(fits(&after, first) && !fits(&after, last), "with the last tab selected, the bar scrolls to the first");
+    }));
     run(steps, Report::default());
 }
 
