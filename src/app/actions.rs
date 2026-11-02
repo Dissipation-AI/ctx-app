@@ -53,7 +53,7 @@ impl App {
             }
             Action::RenameTab => {
                 if let Some(t) = tab {
-                    self.rename_dialog(t);
+                    self.start_rename(t);
                 }
             }
             Action::Copy => {
@@ -383,13 +383,47 @@ impl App {
     // Menus of the chrome
     // -----------------------------------------------------------------------------------------
 
-    pub fn rename_dialog(&mut self, tab: u64) {
+    /// Rename `tab` where its name shows in the bar: its name, selected, in a field.
+    pub fn start_rename(&mut self, tab: u64) {
         let current = self.tab_info(tab).and_then(|i| i.name.clone()).unwrap_or_default();
-        self.prompt("Rename tab", "Letters, digits, spaces, - and _.", &current, move |app, name| {
-            if let Some(name) = name {
-                app.rename_tab(tab, name);
-            }
-        });
+        self.edit_name(tab, &current, None);
+    }
+
+    fn edit_name(&mut self, tab: u64, text: &str, error: Option<String>) {
+        let Some(w) = self.window_of(tab) else { return };
+        if self.wins.get(&w).and_then(|x| x.rename.as_ref()).is_some_and(|r| r.tab != tab) {
+            self.finish_rename(w, true);
+        }
+        let Some(win) = self.wins.get_mut(&w) else { return };
+        let field = ui::Field::with_text("Tab name", text);
+        win.rename = Some(super::RenameEdit { tab, field, error });
+        win.focus = Focus::Rename;
+        win.menu = None;
+        win.chrome_dirty = true;
+        self.blink_on = true;
+        self.ensure_ticker();
+        self.redraw_dirty();
+    }
+
+    /// Stop renaming in window `w`: `save` sends the name (Enter, a click elsewhere), else it's
+    /// dropped (Escape). A name the server refuses comes back into the field, with why.
+    pub fn finish_rename(&mut self, w: u64, save: bool) {
+        let Some(win) = self.wins.get_mut(&w) else { return };
+        let Some(r) = win.rename.take() else { return };
+        win.focus = if win.find.is_some() { Focus::Find } else { Focus::Term };
+        win.chrome_dirty = true;
+        let to = r.field.text.trim().to_string();
+        let current = self.tab_info(r.tab).and_then(|i| i.name.clone()).unwrap_or_default();
+        if save && to != current {
+            let tab = r.tab;
+            let req = Request::RenameTab { tab: TabRef::Number(tab), to: to.clone() };
+            self.request(&format!("ctx rename tab {tab} to \"{to}\""), req, move |app, resp| {
+                if let Response::Error(e) = resp {
+                    app.edit_name(tab, &to, Some(e.message));
+                }
+            });
+        }
+        self.redraw_dirty();
     }
 
     fn open_menu(&mut self, w: u64, m: Menu) {
@@ -831,7 +865,9 @@ impl App {
                 continue;
             }
             // A caret in a field, or a dialog's.
-            if w.dialog.is_some() || w.focus != Focus::Term && (w.find.is_some() || w.panel.is_some()) {
+            if w.dialog.is_some()
+                || w.focus != Focus::Term && (w.find.is_some() || w.panel.is_some() || w.rename.is_some())
+            {
                 w.chrome_dirty = true;
                 if w.panel.is_some() || w.dialog.is_some() {
                     w.dirty = Some(Dirty::All);

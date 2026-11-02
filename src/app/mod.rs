@@ -246,6 +246,17 @@ pub enum Focus {
     Term,
     Find,
     Panel,
+    /// The name field of a tab being renamed in the bar.
+    Rename,
+}
+
+/// A tab's name being edited where it shows in the bar.
+#[derive(Debug, Clone)]
+pub struct RenameEdit {
+    pub tab: u64,
+    pub field: ui::Field,
+    /// Why the server refused the last name tried (shown under the field).
+    pub error: Option<String>,
 }
 
 /// The find bar of a window.
@@ -315,6 +326,7 @@ pub struct Win {
     pub reopen_offer: Option<Vec<u64>>,
     /// Several lines waiting to be pasted at a prompt: the tab and the text.
     pub paste_offer: Option<(u64, String)>,
+    pub rename: Option<RenameEdit>,
     /// A divider being dragged: its path in the tile tree.
     pub dragging_divider: Option<Vec<bool>>,
     /// A selection being dragged: which tab.
@@ -1106,6 +1118,7 @@ impl App {
             focus: Focus::Term,
             reopen_offer: None,
             paste_offer: None,
+            rename: None,
             dragging_divider: None,
             selecting: None,
             hover_link: None,

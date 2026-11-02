@@ -306,7 +306,34 @@ pub fn start() {
         r.check(n == 1, "closing a tiled tab gives its space to the neighbour");
         let t = app.focused_tab(r.window).unwrap_or(r.tab);
         r.tab = t;
-        app.rename_tab(t, "Self test".into());
+        // Double-clicking a tab renames it in place: no dialog, the name selected in a field.
+        let rect = app.wins.get(&r.window).and_then(|x| x.bar.tabs.iter().find(|x| x.0 == t)).map(|x| x.1);
+        if let Some(rc) = rect {
+            app.mouse_down(r.window, rc.x + rc.w / 2.0, rc.y + rc.h / 2.0, 2, 0, 1);
+            app.mouse_up(r.window, rc.x + rc.w / 2.0, rc.y + rc.h / 2.0, 0, 1);
+        }
+        let editing = app
+            .wins
+            .get(&r.window)
+            .is_some_and(|x| x.dialog.is_none() && x.rename.as_ref().is_some_and(|e| e.tab == t));
+        r.check(editing, "double-clicking a tab edits its name in the bar, with no dialog");
+        type_text(app, r.window, "bad/name");
+        enter(app, r.window);
+    }));
+    steps.push_back(Box::new(|app, r| {
+        let refused = app
+            .wins
+            .get(&r.window)
+            .and_then(|x| x.rename.as_ref())
+            .is_some_and(|e| e.error.is_some() && e.field.text == "bad/name");
+        let no_dialog = app.wins.get(&r.window).is_some_and(|x| x.dialog.is_none());
+        r.check(refused && no_dialog, "a refused name stays in the field with why, with no dialog");
+        // Select it all and type the new name.
+        if let Some(e) = app.wins.get_mut(&r.window).and_then(|x| x.rename.as_mut()) {
+            e.field = crate::app::ui::Field::with_text("Tab name", &e.field.text);
+        }
+        type_text(app, r.window, "Self test");
+        enter(app, r.window);
     }));
     steps.push_back(Box::new(|app, r| {
         let name = app.tab_info(r.tab).and_then(|i| i.name.clone());

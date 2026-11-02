@@ -47,6 +47,8 @@ pub struct TabItem {
     pub background: Rgb,
     /// The tab has a theme of its own: unselected, it's tinted with it so colours mark projects.
     pub themed: bool,
+    /// Its name is being edited here: the field, and why the last name was refused.
+    pub rename: Option<(Field, Option<String>)>,
 }
 
 /// What an unselected tab is filled with (`None`: the bar shows through).
@@ -283,6 +285,8 @@ pub struct BarFrame<'a> {
     pub width: f64,
     /// Every tab shows its close button, not only the one under the pointer.
     pub always_close: bool,
+    /// A tab name being edited shows its caret.
+    pub caret_on: bool,
 }
 
 fn px(r: Rect, s: f64) -> Rect {
@@ -330,6 +334,7 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
             f.active,
             f.layout.one_line,
             f.always_close,
+            f.caret_on,
         );
         // A thin separator between plain unselected neighbours.
         let next = f.items.get(i + 1);
@@ -425,6 +430,7 @@ fn draw_tab<C: Canvas>(
     active: bool,
     one_line: bool,
     always_close: bool,
+    caret_on: bool,
 ) {
     let rad = 8.0 * s;
     let (x, w) = if item.selected { (r.x, r.w) } else { (r.x + 1.0 * s, r.w - 2.0 * s) };
@@ -500,6 +506,23 @@ fn draw_tab<C: Canvas>(
     }
     let avail = (right - left).max(10.0 * s);
     let strong = if item.selected && active { col.text } else { mix(col.text, under, 0.2) };
+    if let Some((field, error)) = &item.rename {
+        // Being renamed: the name in a field where it shows; why a name was refused under it (or,
+        // on one line, in place of the folder).
+        let fr = Rect::new(left - 6.0 * s, ty - 3.0 * s, (x + w - 6.0 * s) - (left - 6.0 * s), lh + 6.0 * s);
+        ui::draw_field(c, field, fr, lf, col, true, s, caret_on);
+        if !one_line {
+            match error {
+                Some(e) => {
+                    c.text(&fonts.small, e, left, line2 + 2.0 * s, x + w - 10.0 * s - left, col.waiting, Trunc::Tail);
+                }
+                None => {
+                    draw_details(c, item, &item.path, &fonts.small, left, line2 + 2.0 * s, x + w - 10.0 * s, col, s)
+                }
+            }
+        }
+        return;
+    }
     if one_line {
         // "name — folder", in the two-line fonts: the name large (bold when selected) and whole
         // where it can be, then the rest smaller and dimmer on the same baseline, cut with an
