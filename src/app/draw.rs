@@ -137,6 +137,7 @@ impl App {
         let Some(win) = self.wins.get(&w) else { return Vec::new() };
         let tiled: Vec<u64> = win.tiles.as_ref().map(|n| n.tabs()).unwrap_or_default();
         let (focused, selected, has_tiles) = (win.focused, win.selected, win.tiles.is_some());
+        let rename = win.rename.clone();
         info.tabs
             .iter()
             .map(|t| {
@@ -162,6 +163,7 @@ impl App {
                     status: self.statuses.get(&t.number).copied().unwrap_or(Status::Idle),
                     background,
                     themed,
+                    rename: rename.as_ref().filter(|r| r.tab == t.number).map(|r| (r.field.clone(), r.error.clone())),
                 }
             })
             .collect()
@@ -445,6 +447,7 @@ impl App {
                     active: key,
                     width: cw,
                     always_close,
+                    caret_on: caret_on && key,
                 };
                 chrome::draw_bar(c, &frame, &fonts, &col, scale);
                 let mut strip_y = frame.layout.height;
