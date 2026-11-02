@@ -215,7 +215,7 @@ impl App {
         let Some(w) = w else { return };
         let Some(target) = self.focused_tab(w) else { return };
         let folder = self.tab_info(target).map(|t| t.folder.clone());
-        let r = Request::OpenTab { window: Some(WindowRef::Number(w)), folder, name: None, agent: None };
+        let r = Request::OpenTab { window: Some(WindowRef::Number(w)), folder, name: None, agent: None, like: None };
         self.request("ctx open tab", r, move |app, r| match r {
             Response::Ok(Output::Opened(o)) => {
                 if let Some(t) = o.tab {
