@@ -527,6 +527,32 @@ pub fn start() {
             app.input(t, ctx_protocol::AppInput::Key { key: "ctrl-c".into(), text: None });
         }
     }));
+    // A panel isn't the tab it opened over: that tab's click goes back to it.
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        let Some(t) = app.focused_tab(w) else { return r.check(false, "a tab is focused") };
+        app.state.tab_themes.insert(t, "jet".into());
+        // In view, to be clicked (earlier steps may have scrolled the bar away from it).
+        app.select_tab(w, t);
+        app.layout(w);
+        let button =
+            app.wins.get(&w).and_then(|x| x.bar.buttons.iter().find(|b| b.0 == chrome::Button::Overview)).map(|b| b.1);
+        if let Some(b) = button {
+            click_at(app, w, b.x + b.w / 2.0, b.y + b.h / 2.0, 1, 1);
+        }
+        let open = app.wins.get(&w).and_then(|x| x.panel.as_ref()).is_some_and(|p| p.kind == Kind::Overview);
+        r.check(open, "the Overview button opens Overview");
+        let base = crate::app::ui::colors(&app.theme(None)).bar;
+        let own = crate::app::ui::colors(&app.tab_theme(t)).bar;
+        let now = app.chrome_colors(w).bar;
+        r.check(now == base && now != own, "a panel takes the base theme, not its tab's");
+        let rect = app.wins.get(&w).and_then(|x| x.bar.tabs.iter().find(|x| x.0 == t)).map(|x| x.1);
+        if let Some(rc) = rect {
+            click_at(app, w, rc.x + rc.w / 2.0, rc.y + rc.h / 2.0, 1, 1);
+        }
+        let closed = app.wins.get(&w).is_some_and(|x| x.panel.is_none());
+        r.check(closed && app.focused_tab(w) == Some(t), "clicking the tab the panel opened over goes back to it");
+    }));
     run(steps, Report::default());
 }
 

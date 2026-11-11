@@ -120,6 +120,10 @@ impl App {
 
     /// Colours for window `w`'s chrome: from the theme of the tab it shows.
     pub fn chrome_colors(&mut self, w: u64) -> Colors {
+        // A panel looks the same whichever tab it opened over: the base theme.
+        if self.wins.get(&w).is_some_and(|x| x.panel.is_some()) {
+            return ui::colors(&self.theme(None));
+        }
         let tab = self.focused_tab(w);
         let theme = match tab {
             Some(t) => self.tab_theme(t),
@@ -137,6 +141,8 @@ impl App {
         let Some(win) = self.wins.get(&w) else { return Vec::new() };
         let tiled: Vec<u64> = win.tiles.as_ref().map(|n| n.tabs()).unwrap_or_default();
         let (focused, selected, has_tiles) = (win.focused, win.selected, win.tiles.is_some());
+        // A panel shows instead of the tabs: none of them is the one on screen.
+        let panel = win.panel.is_some();
         info.tabs
             .iter()
             .map(|t| {
@@ -157,7 +163,7 @@ impl App {
                         .or_else(|| super::running_program(t).filter(|p| super::AGENTS.contains(&p.as_str()))),
                     launcher: t.permissions_of.clone(),
                     badge,
-                    selected: focused == Some(t.number) || (!has_tiles && selected == Some(t.number)),
+                    selected: !panel && (focused == Some(t.number) || (!has_tiles && selected == Some(t.number))),
                     tiled: tiled.contains(&t.number),
                     status: self.statuses.get(&t.number).copied().unwrap_or(Status::Idle),
                     background,
@@ -427,6 +433,12 @@ impl App {
         let reopen = win.reopen_offer.as_ref().map(|t| t.len());
         let paste = win.paste_offer.as_ref().map(|(_, t)| t.clone());
         let hover_hit = win.hover;
+        let open_button = win.panel.as_ref().and_then(|p| match p.kind {
+            panels::Kind::Overview => Some(chrome::Button::Overview),
+            panels::Kind::History => Some(chrome::Button::History),
+            panels::Kind::Activity => Some(chrome::Button::Activity),
+            panels::Kind::FindAll => None,
+        });
         let drag = win.tab_press.filter(|p| p.dragging).map(|p| (p.index, p.x));
         let full = matches!(dirty, Some(Dirty::All));
         let surface = win.surface.as_mut().unwrap();
@@ -445,6 +457,7 @@ impl App {
                     active: key,
                     width: cw,
                     always_close,
+                    open: open_button,
                 };
                 chrome::draw_bar(c, &frame, &fonts, &col, scale);
                 let mut strip_y = frame.layout.height;
