@@ -36,6 +36,8 @@ pub struct TabItem {
     pub title: Option<String>,
     /// Opened by an agent: its name.
     pub agent: Option<String>,
+    /// Runs as an agent's account: its name and colour.
+    pub account: Option<(String, Rgb)>,
     /// Runs with a scoped launcher's permissions.
     pub launcher: Option<String>,
     /// Another client touched it recently: true if it typed, false if it only read.
@@ -434,6 +436,10 @@ fn draw_tab<C: Canvas>(
     if let Some(f) = fill {
         c.fill_rounded(f, 1.0, x, top, w, h, [rad, rad, 0.0, 0.0]);
     }
+    // An agent's tab: its colour along the top, so whose account it runs as shows at a glance.
+    if let Some((_, ac)) = &item.account {
+        c.fill_rounded(*ac, 1.0, x + 4.0 * s, top, w - 8.0 * s, 3.0 * s, [1.5 * s; 4]);
+    }
     let under = fill.unwrap_or(col.bar);
     if item.selected {
         // The notebook look: the tab flows into the terminal, with outward curves at its feet
@@ -506,7 +512,7 @@ fn draw_tab<C: Canvas>(
         // ellipsis from the front so the folder's last part shows. The tab is as wide as with two
         // lines. A tab named after its folder doesn't repeat it ("~ — ~").
         let path = if item.path.rsplit('/').next() == Some(item.label.as_str()) { "" } else { item.path.as_str() };
-        let rest = item.agent.is_some() || item.launcher.is_some() || !path.is_empty();
+        let rest = item.account.is_some() || item.agent.is_some() || item.launcher.is_some() || !path.is_empty();
         let room_for_rest = 48.0 * s;
         let cap = if rest && lf.measure(&item.label) + room_for_rest > avail {
             (avail - room_for_rest).max(avail * 0.6)
@@ -541,6 +547,10 @@ fn draw_details<C: Canvas>(
     col: &Colors,
     s: f64,
 ) {
+    if let Some((name, ac)) = &item.account {
+        let tw = c.text(font, &format!("as {name}"), x2, line2, (end2 - x2) * 0.5, *ac, Trunc::Tail);
+        x2 += tw + 6.0 * s;
+    }
     if let Some(a) = &item.agent {
         let text = match item.status {
             Status::AgentWaiting => format!("{a} · waiting"),

@@ -46,6 +46,7 @@ impl App {
                 }
             }
             Action::ReopenTab => self.reopen_last(),
+            Action::ReopenSession => self.reopen_session(),
             Action::History => {
                 if let Some(w) = w {
                     self.toggle_panel(w, Kind::History)
@@ -118,6 +119,11 @@ impl App {
             Action::Overview => {
                 if let Some(w) = w {
                     self.toggle_panel(w, Kind::Overview)
+                }
+            }
+            Action::Agents => {
+                if let Some(w) = w {
+                    self.toggle_panel(w, Kind::Agents)
                 }
             }
             Action::FullScreen => {
@@ -407,6 +413,7 @@ impl App {
     /// The + button: a new tab, or one of the things you usually start tabs with.
     pub fn plus_menu(&mut self, w: u64, x: f64, y: f64) {
         self.refresh_starters();
+        self.refresh_agents(false);
         let mut items = vec![MenuItem {
             shortcut: self.shortcut_of(Action::NewTab),
             ..MenuItem::new("New Tab", MenuAction::NewTabIn(w))
@@ -421,6 +428,20 @@ impl App {
                     ..MenuItem::new(
                         &format!("+ {label}"),
                         MenuAction::Launch { window: w, folder: s.folder.clone(), command: s.command.clone() },
+                    )
+                });
+            }
+        }
+        if !self.agents.list.is_empty() {
+            items.push(MenuItem::separator());
+            items.push(MenuItem::heading("New tab as…"));
+            for a in &self.agents.list {
+                let detail = (!a.full_name.is_empty() && a.full_name != a.name).then(|| a.full_name.clone());
+                items.push(MenuItem {
+                    detail,
+                    ..MenuItem::new(
+                        &format!("as {}", a.name),
+                        MenuAction::NewTabAs { window: w, agent: a.name.clone() },
                     )
                 });
             }
@@ -543,7 +564,8 @@ impl App {
     pub fn open_panel(&mut self, w: u64, kind: Kind) {
         let Some(win) = self.wins.get_mut(&w) else { return };
         win.panel = Some(Panel::new(kind));
-        win.focus = if matches!(kind, Kind::FindAll | Kind::History) { Focus::Panel } else { Focus::Term };
+        win.focus =
+            if matches!(kind, Kind::FindAll | Kind::History | Kind::Agents) { Focus::Panel } else { Focus::Term };
         win.menu = None;
         self.dirty_win(w);
         self.ensure_ticker();
@@ -585,6 +607,12 @@ impl App {
             }
             Kind::Overview => self.refresh_processes(),
             Kind::FindAll => {}
+            Kind::Agents => {
+                if let Some(p) = self.wins.get_mut(&w).and_then(|x| x.panel.as_mut()) {
+                    p.agent = self.agents.list.first().map(|a| a.name.clone());
+                }
+                self.refresh_agents(true);
+            }
         }
         self.update_subscriptions();
         self.redraw_dirty();
@@ -703,6 +731,21 @@ impl App {
                 }
             }
             Kind::Activity => {}
+            Kind::Agents => {
+                let name = p.field.text.trim().to_string();
+                if name.is_empty() {
+                    return;
+                }
+                if self.agents.list.iter().any(|a| a.name == name) {
+                    p.agent = Some(name);
+                    p.field.set("");
+                } else {
+                    p.field.set("");
+                    p.agent = Some(name.clone());
+                    self.agent_sentence(vec!["make".into(), "agent".into(), "named".into(), name]);
+                }
+                self.dirty_win(w);
+            }
         }
         self.redraw_dirty();
     }
