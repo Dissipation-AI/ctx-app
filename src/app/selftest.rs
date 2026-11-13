@@ -558,6 +558,7 @@ pub fn start() {
             home_access: vec![("you".into(), "read and write".into()), ("foreman".into(), "read and write".into())],
             grants: vec![("/tmp/shared".into(), false, true)],
             limits: Some((8192, 200, true)),
+            spaces: vec!["job-search".into()],
             ..Default::default()
         }];
         app.agents.at = Some(std::time::Instant::now());

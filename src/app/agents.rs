@@ -19,6 +19,8 @@ pub struct Agent {
     pub warnings: Vec<String>,
     pub tabs: Vec<u64>,
     pub limits: Option<(u64, u64, bool)>,
+    /// The spaces it's a member of.
+    pub spaces: Vec<String>,
 }
 
 #[derive(Default)]
@@ -32,7 +34,7 @@ pub struct Agents {
 pub fn parse(json: &str) -> Vec<Agent> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return Vec::new() };
     let s = |v: &serde_json::Value, k: &str| v[k].as_str().unwrap_or_default().to_string();
-    v["accounts"]
+    v["agents"]
         .as_array()
         .map(|a| {
             a.iter()
@@ -60,6 +62,10 @@ pub fn parse(json: &str) -> Vec<Agent> {
                         })
                         .unwrap_or_default(),
                     warnings: x["warnings"]
+                        .as_array()
+                        .map(|w| w.iter().filter_map(|e| e.as_str().map(str::to_string)).collect())
+                        .unwrap_or_default(),
+                    spaces: x["spaces"]
                         .as_array()
                         .map(|w| w.iter().filter_map(|e| e.as_str().map(str::to_string)).collect())
                         .unwrap_or_default(),
@@ -180,6 +186,26 @@ impl App {
                 app.alert("ctx", out.trim());
             }
             app.refresh_agents(true);
+        });
+    }
+
+    /// Add `agent` to `space`, making the space first if there isn't one (making one that
+    /// exists fails harmlessly; if making it failed for another reason, adding says so).
+    pub fn join_space(&mut self, agent: String, space: String) {
+        run_ctx(words(&["make", "space", "named", &space]), move |_, _, _, made_err| {
+            let made_err = made_err.trim().to_string();
+            run_ctx(words(&["add", "agent", &agent, "to", "space", &space]), move |app, ok, out, err| {
+                if !ok {
+                    let mut msg = err.trim().to_string();
+                    if !made_err.is_empty() {
+                        msg = format!("{msg}\n{made_err}");
+                    }
+                    app.error(&msg);
+                } else if !out.trim().is_empty() {
+                    app.alert("ctx", out.trim());
+                }
+                app.refresh_agents(true);
+            });
         });
     }
 }
@@ -410,6 +436,28 @@ impl App {
                 let Some((path, _, _)) = a.grants.get(i).cloned() else { return };
                 self.agent_sentence(words(&["forbid", "agent", &name, "to", "read", &path]));
             }
+            A::JoinSpace => {
+                let text = format!(
+                    "The space's name. {name} and the other agents in it share its folder; a space that doesn't exist yet is made. Tabs {name} opens after this can use it."
+                );
+                self.ask_with(
+                    &format!("Add {name} to a space"),
+                    &text,
+                    vec!["Add".to_string(), "Cancel".to_string()],
+                    Some(String::new()),
+                    move |app, b, space| {
+                        let space = space.trim().to_string();
+                        if space.is_empty() || b != Some(0) {
+                            return;
+                        }
+                        app.join_space(name.clone(), space);
+                    },
+                );
+            }
+            A::LeaveSpace(i) => {
+                let Some(space) = a.spaces.get(i).cloned() else { return };
+                self.agent_sentence(words(&["take", "agent", &name, "out", "of", "space", &space]));
+            }
         }
     }
 }
@@ -420,7 +468,7 @@ mod tests {
 
     #[test]
     fn parses_the_cli_list() {
-        let j = r#"{"schema":1,"accounts":[{"name":"mail","full_name":"Mail","uid":601,"home":"/Users/c/Agents/mail","home_access":[{"who":"you","access":"read and write"}],"grants":[{"path":"/Users/c/Context","write":false,"holds":true}],"limits":{"memory_mb":0,"processes":50,"low_priority":true},"colour":"teal","warnings":[],"tabs":[3]}],"agents":[]}"#;
+        let j = r#"{"schema":1,"agents":[{"name":"mail","full_name":"Mail","uid":601,"home":"/Users/c/Agents/mail","home_access":[{"who":"you","access":"read and write"}],"grants":[{"path":"/Users/c/Context","write":false,"holds":true}],"limits":{"memory_mb":0,"processes":50,"low_priority":true},"colour":"teal","warnings":[],"tabs":[3],"spaces":["research"]}],"helper_running":true}"#;
         let a = parse(j);
         assert_eq!(a.len(), 1);
         assert_eq!(a[0].name, "mail");
@@ -428,6 +476,7 @@ mod tests {
         assert_eq!(a[0].tabs, vec![3]);
         assert_eq!(a[0].limits, Some((0, 50, true)));
         assert_eq!(a[0].home_access[0], ("you".into(), "read and write".into()));
+        assert_eq!(a[0].spaces, vec!["research".to_string()]);
     }
 
     #[test]

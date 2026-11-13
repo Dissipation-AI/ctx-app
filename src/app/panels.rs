@@ -100,6 +100,10 @@ pub enum AgentAct {
     Forbid(usize),
     /// Take back a grant (index into `grants`).
     TakeBack(usize),
+    /// Add it to a space (asks which).
+    JoinSpace,
+    /// Take it out of a space (index into `spaces`).
+    LeaveSpace(usize),
     Save,
     CloseEditor,
     /// The editing area: place the caret.
@@ -600,6 +604,7 @@ fn agents(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
         ("Edit AGENTS.md", AgentAct::Edit(1), false),
         ("Share a folder…", AgentAct::Share, false),
         ("Let an agent administer it…", AgentAct::Administer, false),
+        ("Add to a space…", AgentAct::JoinSpace, false),
     ] {
         let bw = ctx.fonts.small.measure(label) / ctx.scale + 20.0;
         if bx + bw > x + w {
@@ -670,6 +675,26 @@ fn agents(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
         y += 30.0;
     }
     y += 6.0;
+    section(items, &mut y, "Spaces");
+    if a.spaces.is_empty() {
+        text(items, Rect::new(x, y, w, 18.0), Font::Label, "In no space: only its home is its own to share.", col.dim);
+        y += 24.0;
+    }
+    for (i, space) in a.spaces.iter().enumerate() {
+        text(items, Rect::new(x, y + 3.0, w - 110.0, 18.0), Font::Label, space.clone(), col.text);
+        button(
+            items,
+            ctx,
+            x + w - 90.0,
+            y,
+            "Take out",
+            false,
+            hov(AgentAct::LeaveSpace(i)),
+            PanelHit::Act(AgentAct::LeaveSpace(i)),
+        );
+        y += 30.0;
+    }
+    y += 6.0;
     section(items, &mut y, "Limits");
     let (mem, procs, low) = a.limits.unwrap_or_default();
     let mut parts = Vec::new();
@@ -731,6 +756,9 @@ fn details_height(a: &super::agents::Agent) -> f64 {
         + 6.0
         + 24.0
         + rows(a.grants.len())
+        + 6.0
+        + 24.0
+        + rows(a.spaces.len())
         + 6.0
         + 24.0
         + 26.0
