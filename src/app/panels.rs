@@ -3,6 +3,9 @@
 //! programs did), Find in All Tabs, and the Overview (every window, its tabs and what runs in
 //! them, as a tree you can rearrange by dragging).
 //!
+//! Agents lists agents' accounts, what each may reach, and edits their instructions; every change
+//! there is a `ctx` sentence.
+//!
 //! A panel is laid out as a list of [`Item`]s (a rectangle, how to draw it, and what clicking it
 //! does), so drawing and hit-testing can't disagree.
 
@@ -21,6 +24,7 @@ pub enum Kind {
     Activity,
     FindAll,
     Overview,
+    Agents,
 }
 
 impl Kind {
@@ -30,6 +34,7 @@ impl Kind {
             Kind::Activity => "Activity",
             Kind::FindAll => "Find in All Tabs",
             Kind::Overview => "Overview",
+            Kind::Agents => "Agents",
         }
     }
 }
@@ -71,6 +76,34 @@ pub enum PanelHit {
     Window(u64),
     /// The Overview's "new window" drop target.
     NewWindow,
+    /// An agent in the Agents list.
+    Agent(usize),
+    /// A button in an agent's details.
+    Act(AgentAct),
+}
+
+/// What an Agents button does (each becomes a `ctx` sentence, or opens the editor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentAct {
+    OpenTab,
+    /// Edit CLAUDE.md (0) or AGENTS.md (1).
+    Edit(u8),
+    Share,
+    Administer,
+    Memory,
+    Processes,
+    LowPriority,
+    NoLimits,
+    Reset,
+    Remove,
+    /// Take away an entry on its home (index into `home_access`).
+    Forbid(usize),
+    /// Take back a grant (index into `grants`).
+    TakeBack(usize),
+    Save,
+    CloseEditor,
+    /// The editing area: place the caret.
+    Text,
 }
 
 /// One panel's state.
@@ -90,6 +123,10 @@ pub struct Panel {
     pub searching: bool,
     /// A card being dragged in the Overview: tab, pointer (points).
     pub drag: Option<(u64, f64, f64, bool)>,
+    /// The agent shown in Agents.
+    pub agent: Option<String>,
+    /// An agent's instructions being edited.
+    pub editor: Option<super::editor::Editor>,
 }
 
 impl Panel {
@@ -99,6 +136,7 @@ impl Panel {
             Kind::FindAll => "Text to find in open and saved tabs, then Return",
             Kind::Activity => "Filter",
             Kind::Overview => "Filter tabs",
+            Kind::Agents => "Filter, or a new agent's name and Return",
         };
         Panel {
             kind,
@@ -113,6 +151,8 @@ impl Panel {
             found: None,
             searching: false,
             drag: None,
+            agent: None,
+            editor: None,
         }
     }
 
@@ -246,11 +286,13 @@ pub enum Op {
         w: f64,
         c: Rgb,
     },
-    /// Terminal rows (History's viewer), drawn as the terminal draws them.
+    /// Terminal rows (History's viewer, the instructions editor), drawn as the terminal draws
+    /// them, with a caret (column, row) when editing.
     Mono {
         rows: Vec<Row>,
         fg: Rgb,
         bg: Rgb,
+        cursor: Option<(usize, usize)>,
     },
     Clip(Option<Rect>),
 }
@@ -277,6 +319,9 @@ pub struct Ctx<'a> {
     pub agent_window: Option<u64>,
     /// What runs in each tab (the Overview's third column).
     pub processes: &'a HashMap<u64, Vec<ProcessInfo>>,
+    /// Agents' accounts (the Agents panel) and each one's colour.
+    pub agents: &'a [super::agents::Agent],
+    pub agent_colour: &'a dyn Fn(&str) -> Rgb,
 }
 
 /// The rows a tab takes in the Overview: one per process under its shell (at least one).
@@ -363,13 +408,342 @@ pub fn layout(p: &Panel, area: Rect, ctx: &Ctx) -> Vec<Item> {
         Kind::Activity => activity(&mut items, p, body, ctx),
         Kind::FindAll => find_all(&mut items, p, body, ctx),
         Kind::Overview => overview(&mut items, p, body, ctx),
+        Kind::Agents => agents(&mut items, p, body, ctx),
     }
     items
 }
 
+/// Agents that pass the field's filter.
+pub fn visible_agents<'a>(p: &Panel, ctx: &'a Ctx) -> Vec<(usize, &'a super::agents::Agent)> {
+    let f = p.field.text.trim().to_lowercase();
+    ctx.agents
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| f.is_empty() || a.name.contains(&f) || a.full_name.to_lowercase().contains(&f))
+        .collect()
+}
+
+/// The editor's text area within the panel body (for clicks and scrolling).
+pub fn editor_area(body: Rect) -> Rect {
+    let lw = list_width(body);
+    let x = body.x + lw + 1.0;
+    Rect::new(x + 8.0, body.y + 52.0, body.w - lw - 17.0, (body.h - 60.0).max(0.0))
+}
+
+/// The body under a panel's header.
+pub fn body_of(area: Rect) -> Rect {
+    let top = area.y + 10.0 + 40.0;
+    Rect::new(area.x, top + 1.0, area.w, (area.y + area.h - top - 1.0).max(0.0))
+}
+
+/// A button: filled with the accent when `strong`.
+#[allow(clippy::too_many_arguments)]
+fn button(
+    items: &mut Vec<Item>,
+    ctx: &Ctx,
+    x: f64,
+    y: f64,
+    label: &str,
+    strong: bool,
+    hover: bool,
+    h: PanelHit,
+) -> f64 {
+    let w = ctx.fonts.small.measure(label) / ctx.scale + 20.0;
+    let r = Rect::new(x, y, w, 24.0);
+    let bg = match (strong, hover) {
+        (true, false) => ctx.col.accent,
+        (true, true) => mix(ctx.col.accent, [255, 255, 255], 0.15),
+        (false, true) => ctx.col.hover,
+        (false, false) => ctx.col.field,
+    };
+    fill(items, r, bg, 6.0);
+    text(
+        items,
+        Rect::new(x + 10.0, y + 4.0, w - 14.0, 16.0),
+        Font::Small,
+        label,
+        if strong { [255, 255, 255] } else { ctx.col.text },
+    );
+    hit(items, r, h);
+    w
+}
+
+fn agents(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
+    let col = ctx.col;
+    let lw = list_width(body);
+    fill(items, Rect::new(body.x + lw, body.y, 1.0, body.h), col.line, 0.0);
+    // The list.
+    let list = Rect::new(body.x, body.y, lw, body.h);
+    items.push(Item { rect: list, op: Op::Clip(Some(list)), hit: None });
+    let shown = visible_agents(p, ctx);
+    let row_h = 48.0;
+    let mut ry = list.y + 8.0 - p.scroll[0];
+    if shown.is_empty() {
+        let msg = if ctx.agents.is_empty() {
+            "No agents yet. Type a name above and press Return to make one: its own account, with its home in ~/Agents."
+        } else {
+            "No agent matches. Press Return to make one with this name."
+        };
+        for (i, line) in ui::wrap(msg, &ctx.fonts.label, (lw - 32.0) * ctx.scale).iter().enumerate() {
+            text(
+                items,
+                Rect::new(list.x + 16.0, ry + 4.0 + i as f64 * 19.0, lw - 32.0, 18.0),
+                Font::Label,
+                line.clone(),
+                col.dim,
+            );
+        }
+    }
+    for (i, a) in &shown {
+        if ry + row_h >= list.y && ry <= list.y + list.h {
+            let r = Rect::new(list.x + 6.0, ry, lw - 12.0, row_h - 4.0);
+            if p.agent.as_deref() == Some(a.name.as_str()) {
+                fill(items, r, mix(col.accent, col.panel, 0.55), 7.0);
+            } else if p.hover == Some(PanelHit::Agent(*i)) {
+                fill(items, r, col.hover, 7.0);
+            }
+            fill(items, Rect::new(r.x + 10.0, r.y + 9.0, 10.0, 10.0), (ctx.agent_colour)(&a.name), 5.0);
+            text(items, Rect::new(r.x + 28.0, r.y + 4.0, r.w - 36.0, 18.0), Font::Bold, a.name.clone(), col.text);
+            let mut sub = Vec::new();
+            if !a.full_name.is_empty() && a.full_name != a.name {
+                sub.push(a.full_name.clone());
+            }
+            sub.push(match a.tabs.len() {
+                0 => "no tabs".to_string(),
+                1 => "1 tab".to_string(),
+                n => format!("{n} tabs"),
+            });
+            if !a.warnings.is_empty() {
+                sub.push("needs attention".into());
+            }
+            let c = if a.warnings.is_empty() { col.dim } else { col.waiting };
+            text(items, Rect::new(r.x + 28.0, r.y + 23.0, r.w - 36.0, 16.0), Font::Small, sub.join(" · "), c);
+            hit(items, r, PanelHit::Agent(*i));
+        }
+        ry += row_h;
+    }
+    items.push(Item { rect: list, op: Op::Clip(None), hit: None });
+    let x0 = body.x + lw + 1.0;
+    let pane = Rect::new(x0, body.y, body.w - lw - 1.0, body.h);
+    let Some(a) = p.agent.as_ref().and_then(|n| ctx.agents.iter().find(|a| &a.name == n)) else {
+        text(
+            items,
+            Rect::new(pane.x + 16.0, pane.y + 14.0, pane.w - 32.0, 18.0),
+            Font::Label,
+            "Choose an agent.",
+            col.dim,
+        );
+        return;
+    };
+    let hov = |h: AgentAct| p.hover == Some(PanelHit::Act(h));
+    if let Some(e) = &p.editor {
+        // The instructions editor.
+        let file = e.path.rsplit('/').next().unwrap_or("");
+        let title = format!("{} — {file}{}", a.name, if e.changed { " (edited)" } else { "" });
+        text(items, Rect::new(pane.x + 16.0, pane.y + 16.0, pane.w - 220.0, 20.0), Font::Bold, title, col.text);
+        let mut bx = pane.x + pane.w - 16.0;
+        for (label, act, strong) in [("Close", AgentAct::CloseEditor, false), ("Save", AgentAct::Save, true)] {
+            let w = ctx.fonts.small.measure(label) / ctx.scale + 20.0;
+            bx -= w;
+            button(items, ctx, bx, pane.y + 14.0, label, strong && e.changed, hov(act), PanelHit::Act(act));
+            bx -= 8.0;
+        }
+        let area = editor_area(body);
+        let bg = (ctx.tab_bg)(0);
+        fill(items, area, bg, 8.0);
+        let inner = Rect::new(area.x + 8.0, area.y + 6.0, area.w - 16.0, area.h - 12.0);
+        let ch = ctx.mono.cell_h / ctx.scale;
+        let fit = (inner.h / ch).floor().max(1.0) as usize;
+        let pal = super::editor::Palette {
+            text: [222, 222, 222],
+            heading: (ctx.agent_colour)(&a.name),
+            emphasis: [240, 198, 116],
+            code: [138, 190, 183],
+            marker: [129, 162, 190],
+            quote: [150, 152, 150],
+            link: [178, 148, 187],
+        };
+        let rows = e.rows(fit, &pal);
+        let cursor = (e.row >= e.top && e.row < e.top + fit).then_some((e.col, e.row - e.top));
+        items.push(Item {
+            rect: inner,
+            op: Op::Mono { rows, fg: [222, 222, 222], bg, cursor },
+            hit: Some(PanelHit::Act(AgentAct::Text)),
+        });
+        return;
+    }
+    // Details, scrolled by `scroll[1]`.
+    items.push(Item { rect: pane, op: Op::Clip(Some(pane)), hit: None });
+    let mut y = pane.y + 14.0 - p.scroll[1];
+    let x = pane.x + 16.0;
+    let w = pane.w - 32.0;
+    fill(items, Rect::new(x, y + 5.0, 12.0, 12.0), (ctx.agent_colour)(&a.name), 6.0);
+    let head = if a.full_name.is_empty() || a.full_name == a.name {
+        a.name.clone()
+    } else {
+        format!("{} ({})", a.name, a.full_name)
+    };
+    text(items, Rect::new(x + 20.0, y, w - 20.0, 22.0), Font::Title, head, col.text);
+    y += 28.0;
+    text(
+        items,
+        Rect::new(x, y, w, 16.0),
+        Font::Small,
+        format!("Account {}, home {}", a.name, super::short_folder(&a.home)),
+        col.dim,
+    );
+    y += 26.0;
+    let mut bx = x;
+    for (label, act, strong) in [
+        ("Open a tab as it", AgentAct::OpenTab, true),
+        ("Edit CLAUDE.md", AgentAct::Edit(0), false),
+        ("Edit AGENTS.md", AgentAct::Edit(1), false),
+        ("Share a folder…", AgentAct::Share, false),
+        ("Let an agent administer it…", AgentAct::Administer, false),
+    ] {
+        let bw = ctx.fonts.small.measure(label) / ctx.scale + 20.0;
+        if bx + bw > x + w {
+            bx = x;
+            y += 30.0;
+        }
+        bx += button(items, ctx, bx, y, label, strong, hov(act), PanelHit::Act(act)) + 8.0;
+    }
+    y += 40.0;
+    let section = |items: &mut Vec<Item>, y: &mut f64, title: &str| {
+        text(items, Rect::new(x, *y, w, 18.0), Font::Bold, title.to_string(), col.text);
+        *y += 24.0;
+    };
+    section(items, &mut y, "Who may use its home");
+    if a.home_access.is_empty() {
+        text(items, Rect::new(x, y, w, 18.0), Font::Label, "Only the agent itself.", col.dim);
+        y += 24.0;
+    }
+    for (i, (who, access)) in a.home_access.iter().enumerate() {
+        let what = if access.contains("write") {
+            format!("{who} may {access} it: administers it")
+        } else {
+            format!("{who} may {access} it: sees its tabs")
+        };
+        text(items, Rect::new(x, y + 3.0, w - 110.0, 18.0), Font::Label, what, col.text);
+        if who != "you" {
+            button(
+                items,
+                ctx,
+                x + w - 90.0,
+                y,
+                "Take away",
+                false,
+                hov(AgentAct::Forbid(i)),
+                PanelHit::Act(AgentAct::Forbid(i)),
+            );
+        }
+        y += 30.0;
+    }
+    y += 6.0;
+    section(items, &mut y, "Shared with it");
+    if a.grants.is_empty() {
+        text(items, Rect::new(x, y, w, 18.0), Font::Label, "Nothing of yours yet.", col.dim);
+        y += 24.0;
+    }
+    for (i, (path, write, holds)) in a.grants.iter().enumerate() {
+        let mut what = format!("{} {}", if *write { "reads and writes" } else { "reads" }, super::short_folder(path));
+        if !holds {
+            what.push_str(" (no longer holds)");
+        }
+        text(
+            items,
+            Rect::new(x, y + 3.0, w - 110.0, 18.0),
+            Font::Label,
+            what,
+            if *holds { col.text } else { col.waiting },
+        );
+        button(
+            items,
+            ctx,
+            x + w - 90.0,
+            y,
+            "Take back",
+            false,
+            hov(AgentAct::TakeBack(i)),
+            PanelHit::Act(AgentAct::TakeBack(i)),
+        );
+        y += 30.0;
+    }
+    y += 6.0;
+    section(items, &mut y, "Limits");
+    let (mem, procs, low) = a.limits.unwrap_or_default();
+    let mut parts = Vec::new();
+    if mem > 0 {
+        parts.push(if mem % 1024 == 0 {
+            format!("{} GB of memory", mem / 1024)
+        } else {
+            format!("{mem} MB of memory")
+        });
+    }
+    if procs > 0 {
+        parts.push(format!("{procs} processes"));
+    }
+    if low {
+        parts.push("low priority".into());
+    }
+    text(
+        items,
+        Rect::new(x, y, w, 18.0),
+        Font::Label,
+        if parts.is_empty() { "None.".into() } else { parts.join(", ") },
+        col.text,
+    );
+    y += 26.0;
+    let mut bx = x;
+    for (label, act) in [
+        ("Memory…", AgentAct::Memory),
+        ("Processes…", AgentAct::Processes),
+        (if low { "Low priority ✓" } else { "Low priority" }, AgentAct::LowPriority),
+        ("No limits", AgentAct::NoLimits),
+    ] {
+        bx += button(items, ctx, bx, y, label, false, hov(act), PanelHit::Act(act)) + 8.0;
+    }
+    y += 40.0;
+    for wmsg in &a.warnings {
+        for line in ui::wrap(&format!("⚠ {wmsg}"), &ctx.fonts.label, w * ctx.scale) {
+            text(items, Rect::new(x, y, w, 18.0), Font::Label, line, col.waiting);
+            y += 20.0;
+        }
+    }
+    y += 10.0;
+    let mut bx = x;
+    for (label, act) in [("Reset its settings", AgentAct::Reset), ("Remove…", AgentAct::Remove)] {
+        bx += button(items, ctx, bx, y, label, false, hov(act), PanelHit::Act(act)) + 8.0;
+    }
+    items.push(Item { rect: pane, op: Op::Clip(None), hit: None });
+}
+
+/// How tall an agent's details are (for scrolling): the same steps `agents` lays out, with the
+/// buttons taken as two rows.
+fn details_height(a: &super::agents::Agent) -> f64 {
+    let rows = |n: usize| n.max(1) as f64 * 30.0;
+    14.0 + 28.0
+        + 26.0
+        + 30.0
+        + 40.0
+        + 24.0
+        + rows(a.home_access.len())
+        + 6.0
+        + 24.0
+        + rows(a.grants.len())
+        + 6.0
+        + 24.0
+        + 26.0
+        + 40.0
+        + a.warnings.len() as f64 * 40.0
+        + 10.0
+        + 24.0
+        + 24.0
+}
+
 /// The scroll region of a panel's main list (for wheel events): index into `scroll`.
 pub fn scroll_region(p: &Panel, area: Rect, x: f64) -> usize {
-    if p.kind == Kind::History && x > area.x + list_width(area) { 1 } else { 0 }
+    if matches!(p.kind, Kind::History | Kind::Agents) && x > area.x + list_width(area) { 1 } else { 0 }
 }
 
 fn list_width(area: Rect) -> f64 {
@@ -472,7 +846,7 @@ fn history(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
         let skip = (p.scroll[1] / ch).floor().max(0.0) as usize;
         let fit = (out.h / ch).ceil() as usize;
         let rows: Vec<Row> = rows.iter().skip(skip).take(fit).cloned().collect();
-        items.push(Item { rect: out, op: Op::Mono { rows, fg: [230, 230, 230], bg }, hit: None });
+        items.push(Item { rect: out, op: Op::Mono { rows, fg: [230, 230, 230], bg, cursor: None }, hit: None });
     } else {
         text(items, Rect::new(out.x + 12.0, out.y + 10.0, out.w - 24.0, 18.0), Font::Label, "Loading…", col.dim);
     }
@@ -788,6 +1162,7 @@ fn overview(items: &mut Vec<Item>, p: &Panel, body: Rect, ctx: &Ctx) {
 pub fn content_height(p: &Panel, ctx: &Ctx) -> [f64; 2] {
     let main = match p.kind {
         Kind::History => p.visible_closed().len() as f64 * 44.0 + 40.0,
+        Kind::Agents => visible_agents(p, ctx).len() as f64 * 48.0 + 40.0,
         Kind::Activity => ctx.activity.len() as f64 * 42.0 + 16.0,
         Kind::FindAll => {
             p.found
@@ -808,7 +1183,16 @@ pub fn content_height(p: &Panel, ctx: &Ctx) -> [f64; 2] {
                 + 80.0
         }
     };
-    let viewer = p.records.as_ref().map(|(_, r)| r.len() as f64 * ctx.mono.cell_h / ctx.scale + 40.0).unwrap_or(0.0);
+    let viewer = match p.kind {
+        Kind::Agents => p
+            .agent
+            .as_ref()
+            .and_then(|n| ctx.agents.iter().find(|a| &a.name == n))
+            .filter(|_| p.editor.is_none())
+            .map(details_height)
+            .unwrap_or(0.0),
+        _ => p.records.as_ref().map(|(_, r)| r.len() as f64 * ctx.mono.cell_h / ctx.scale + 40.0).unwrap_or(0.0),
+    };
     [main, viewer]
 }
 
@@ -835,7 +1219,17 @@ pub fn draw<C: Canvas>(c: &mut C, p: &Panel, items: &[Item], ctx: &Ctx, caret_on
                 };
                 c.text(f, t, r.x, r.y, r.w, *col, *trunc);
             }
-            Op::Field => ui::draw_field(c, &p.field, r, &ctx.fonts.label, ctx.col, ctx.focused_field, s, caret_on),
+            // The editor, when open, has the keys rather than the field.
+            Op::Field => ui::draw_field(
+                c,
+                &p.field,
+                r,
+                &ctx.fonts.label,
+                ctx.col,
+                ctx.focused_field && p.editor.is_none(),
+                s,
+                caret_on,
+            ),
             Op::Stroke { path, w, c: col } => {
                 let path: Vec<PathOp> = path
                     .iter()
@@ -849,7 +1243,7 @@ pub fn draw<C: Canvas>(c: &mut C, p: &Panel, items: &[Item], ctx: &Ctx, caret_on
                     .collect();
                 c.stroke(&path, w * s, *col, 1.0);
             }
-            Op::Mono { rows, fg, bg } => {
+            Op::Mono { rows, fg, bg, cursor } => {
                 let tile = TileFrame {
                     x: r.x,
                     y: r.y,
@@ -860,7 +1254,15 @@ pub fn draw<C: Canvas>(c: &mut C, p: &Panel, items: &[Item], ctx: &Ctx, caret_on
                     foreground: *fg,
                     background: *bg,
                     selection_color: ctx.col.selected,
-                    cursor: None,
+                    cursor: cursor.filter(|_| caret_on || !ctx.focused_field).map(|(column, row)| {
+                        crate::render::CursorFrame {
+                            column,
+                            row,
+                            shape: CursorShape::Bar,
+                            focused: ctx.focused_field,
+                            color: ctx.col.accent,
+                        }
+                    }),
                     selection: Vec::new(),
                     matches: Vec::new(),
                     link: None,

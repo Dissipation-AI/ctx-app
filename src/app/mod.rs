@@ -8,8 +8,10 @@
 //! windows, shows their buffers, and turns the window system's events into calls on [`App`].
 
 pub mod actions;
+pub mod agents;
 pub mod chrome;
 pub mod draw;
+pub mod editor;
 pub mod input;
 pub mod panels;
 pub mod selftest;
@@ -400,6 +402,8 @@ pub struct App {
     /// Starters for the + menu, and when they were worked out.
     pub starters: Vec<Starter>,
     pub starters_at: Option<Instant>,
+    /// Agents' accounts, from `ctx list agents`.
+    pub agents: agents::Agents,
     /// What runs in each tab (for the Overview), and when it was last asked.
     pub processes: HashMap<u64, Vec<ProcessInfo>>,
     pub processes_at: Option<Instant>,
@@ -470,6 +474,7 @@ pub fn launched() {
         unread: HashMap::new(),
         starters: Vec::new(),
         starters_at: None,
+        agents: Default::default(),
         processes: HashMap::new(),
         processes_at: None,
     };
@@ -1218,6 +1223,40 @@ impl App {
         }
     }
 
+    /// A new tab in window `w` as agent `agent`'s account, in its home (`ctx switch to agent`).
+    pub fn new_tab_as(&mut self, w: u64, agent: String) {
+        let r = Request::OpenTab {
+            window: Some(WindowRef::Number(w)),
+            folder: None,
+            name: None,
+            agent: Some(agent.clone()),
+            like: None,
+        };
+        self.request(&format!("ctx switch to agent \"{agent}\""), r, move |app, r| match r {
+            Response::Ok(Output::Opened(o)) => {
+                if let Some(t) = o.tab {
+                    app.pending_select(o.window, t);
+                }
+            }
+            Response::Error(e) => app.error(&e.message),
+            _ => {}
+        });
+    }
+
+    /// `ctx reopen tabs from last session`, then show the windows it filled.
+    pub fn reopen_session(&mut self) {
+        self.request("ctx reopen tabs from last session", Request::ReopenLastSession, |app, r| match r {
+            Response::Ok(Output::Done(d)) => {
+                // New windows show themselves as they're listed; say so only when nothing came back.
+                if !d.message.starts_with("Reopened") {
+                    app.alert("Reopen All Tabs from Last Session", &d.message);
+                }
+            }
+            Response::Error(e) => app.error(&e.message),
+            _ => {}
+        });
+    }
+
     /// A new tab in window `w`, in `folder` (default: the current tab's), typing `command` at its
     /// prompt once its shell is ready (the + menu's starters).
     pub fn new_tab_with(&mut self, w: u64, folder: Option<String>, command: Option<String>) {
@@ -1594,7 +1633,10 @@ impl App {
             let info = t.and_then(|t| self.tab_info(t));
             let title = match info {
                 Some(i) => {
-                    let label = tab_label(i);
+                    let mut label = tab_label(i);
+                    if let Some(o) = &i.owner {
+                        label = format!("{label} — as {o}");
+                    }
                     match &i.title {
                         Some(x) if !x.is_empty() => format!("{label} — {x}"),
                         _ => label,
