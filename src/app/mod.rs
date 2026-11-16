@@ -1374,6 +1374,11 @@ impl App {
             }
             return;
         }
+        // The Agents window is a view of tabs that run in the background: closing it hides it.
+        if self.window_info(w).is_some_and(|i| self.is_agent_window(i)) {
+            self.hide_window(w);
+            return;
+        }
         let r = Request::CloseWindow { window: WindowRef::Number(w), without_asking };
         self.request(&format!("ctx close window {w}"), r, move |app, r| {
             if let Response::Error(e) = r {
@@ -1422,6 +1427,20 @@ impl App {
             Response::Error(e) => app.error(&e.message),
             _ => {}
         });
+    }
+
+    /// Take window `w` off the screen, its tabs still running (it shows again when you show one of
+    /// them). Not shown at the next launch either.
+    pub fn hide_window(&mut self, w: u64) {
+        if let Some(win) = self.wins.remove(&w) {
+            plat::close_window(&win.views);
+        }
+        self.state.windows.remove(&w);
+        if self.list.windows.iter().any(|x| x.number == w && self.is_agent_window(x)) {
+            self.state.agent_window_shown = false;
+        }
+        self.save_state();
+        self.update_subscriptions();
     }
 
     pub fn reopen(&mut self, tab: u64) {
