@@ -49,8 +49,9 @@ pub struct TabItem {
     pub background: Rgb,
     /// The tab has a theme of its own: unselected, it's tinted with it so colours mark projects.
     pub themed: bool,
-    /// The label is the host it's connected to over ssh: drawn in italics.
-    pub remote: bool,
+    /// How much of the label (bytes) is the host it's connected to over ssh, `[swirles]`: drawn
+    /// in italics. 0: none.
+    pub remote: usize,
 }
 
 /// What an unselected tab is filled with (`None`: the bar shows through).
@@ -478,12 +479,8 @@ fn draw_tab<C: Canvas>(
         c.stroke(&path, 1.4 * s, ink, 1.0);
         left = cr.x + cr.w + 6.0 * s;
     }
-    let lf = match (item.selected, item.remote) {
-        (true, false) => &fonts.label_bold,
-        (false, false) => &fonts.label,
-        (true, true) => &fonts.label_bold_italic,
-        (false, true) => &fonts.label_italic,
-    };
+    let (lf, lfi) =
+        if item.selected { (&fonts.label_bold, &fonts.label_bold_italic) } else { (&fonts.label, &fonts.label_italic) };
     let lh = lf.height();
     let ph = fonts.small.height();
     let ty = if one_line { (top + (h - lh) / 2.0).round() } else { (top + (h - lh - ph - 1.0 * s) / 2.0).round() };
@@ -528,7 +525,7 @@ fn draw_tab<C: Canvas>(
         } else {
             avail
         };
-        let tw = c.text(lf, &item.label, left, ty, cap, strong, Trunc::Tail);
+        let tw = draw_label(c, item, lf, lfi, left, ty, cap, strong);
         let x2 = left + tw;
         if rest && right - x2 > 24.0 * s {
             let small_y = ty + lf.ascent() - fonts.small.ascent();
@@ -537,9 +534,28 @@ fn draw_tab<C: Canvas>(
         }
     } else {
         // First line: the label, what the eye reads first. Second line, smaller and dimmer.
-        c.text(lf, &item.label, left, ty, avail, strong, Trunc::Tail);
+        draw_label(c, item, lf, lfi, left, ty, avail, strong);
         draw_details(c, item, &item.path, &fonts.small, left, line2, x + w - 10.0 * s, col, s);
     }
+}
+
+/// A tab's label, its host part (`[swirles]`) in italics. Returns the width drawn.
+#[allow(clippy::too_many_arguments)]
+fn draw_label<C: Canvas>(
+    c: &mut C,
+    item: &TabItem,
+    lf: &UiFont,
+    italic: &UiFont,
+    x: f64,
+    y: f64,
+    max: f64,
+    ink: Rgb,
+) -> f64 {
+    let Some((host, rest)) = item.label.split_at_checked(item.remote).filter(|_| item.remote > 0) else {
+        return c.text(lf, &item.label, x, y, max, ink, Trunc::Tail);
+    };
+    let w = c.text(italic, host, x, y, max, ink, Trunc::Tail);
+    w + c.text(lf, rest, x + w, y, max - w, ink, Trunc::Tail)
 }
 
 /// A tab's details, from `x2` to `end2` at `line2`: who opened it (an agent), a launcher, then
