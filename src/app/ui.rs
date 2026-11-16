@@ -360,6 +360,11 @@ pub fn draw_field<C: Canvas>(
 pub enum MenuAction {
     Perform(Action),
     NewTabIn(u64),
+    /// A tab as an agent's account.
+    NewTabAs {
+        window: u64,
+        agent: String,
+    },
     /// Open a tab in `folder` and type `command` at its prompt (without pressing Enter).
     Launch {
         window: u64,
