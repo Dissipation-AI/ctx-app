@@ -49,6 +49,8 @@ pub struct TabItem {
     pub background: Rgb,
     /// The tab has a theme of its own: unselected, it's tinted with it so colours mark projects.
     pub themed: bool,
+    /// The label is the host it's connected to over ssh: drawn in italics.
+    pub remote: bool,
 }
 
 /// What an unselected tab is filled with (`None`: the bar shows through).
@@ -270,6 +272,8 @@ impl BarLayout {
 pub struct ChromeFonts {
     pub label: std::rc::Rc<UiFont>,
     pub label_bold: std::rc::Rc<UiFont>,
+    pub label_italic: std::rc::Rc<UiFont>,
+    pub label_bold_italic: std::rc::Rc<UiFont>,
     pub small: std::rc::Rc<UiFont>,
     pub title: std::rc::Rc<UiFont>,
 }
@@ -474,7 +478,12 @@ fn draw_tab<C: Canvas>(
         c.stroke(&path, 1.4 * s, ink, 1.0);
         left = cr.x + cr.w + 6.0 * s;
     }
-    let lf = if item.selected { &fonts.label_bold } else { &fonts.label };
+    let lf = match (item.selected, item.remote) {
+        (true, false) => &fonts.label_bold,
+        (false, false) => &fonts.label,
+        (true, true) => &fonts.label_bold_italic,
+        (false, true) => &fonts.label_italic,
+    };
     let lh = lf.height();
     let ph = fonts.small.height();
     let ty = if one_line { (top + (h - lh) / 2.0).round() } else { (top + (h - lh - ph - 1.0 * s) / 2.0).round() };

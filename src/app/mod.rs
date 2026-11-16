@@ -588,7 +588,11 @@ pub fn tab_lines(t: &TabInfo) -> (String, String) {
     };
     let label = match (&t.name, running_program(t)) {
         (Some(n), _) => n.clone(),
-        (None, Some(p)) => p,
+        // Connected somewhere: where, in brackets (drawn in italics), instead of "ssh".
+        (None, Some(p)) => match ssh_host(t) {
+            Some(h) => format!("[{h}]"),
+            None => p,
+        },
         (None, None) => folder.rsplit('/').find(|p| !p.is_empty()).unwrap_or("~").to_string(),
     };
     (label, folder)
@@ -607,6 +611,24 @@ pub fn running_program(t: &TabInfo) -> Option<String> {
         Some(p) => p,
         None => typed.to_string(),
     })
+}
+
+/// The host a tab running `ssh` is connected to: the alias from `~/.ssh/config` when there is
+/// one, else its own name (see [`crate::ssh::label`]). From ssh's arguments as `ps` shows them,
+/// else the command line.
+pub fn ssh_host(t: &TabInfo) -> Option<String> {
+    if running_program(t).as_deref() != Some("ssh") {
+        return None;
+    }
+    let from_ps =
+        t.pid.and_then(crate::process::args).filter(|a| a.first().is_some_and(|p| p.rsplit('/').next() == Some("ssh")));
+    let args = from_ps.or_else(|| {
+        // `cd x && ssh host`: the words from `ssh` to the next `;`, `&&` or `|`.
+        let words: Vec<String> = t.running.as_deref()?.split_whitespace().map(str::to_string).collect();
+        let at = words.iter().position(|w| w.rsplit('/').next() == Some("ssh"))?;
+        Some(words[at..].iter().take_while(|w| !matches!(w.as_str(), ";" | "&&" | "||" | "|")).cloned().collect())
+    })?;
+    crate::ssh::tab_host(&args, t.remote_host.as_deref())
 }
 
 /// Programs that run other programs, named in `ps` instead of what they run.
