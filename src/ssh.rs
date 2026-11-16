@@ -133,7 +133,8 @@ fn config_aliases() -> Vec<(String, Option<String>)> {
 }
 
 /// What to call the host: the alias you typed, or the alias whose `HostName` is what you typed;
-/// else the name the remote shell reports (`remote`), else what you typed.
+/// else `remote` (the server's name for the target, today the host as you typed it), else what
+/// you typed.
 pub fn label(dest: &str, remote: Option<&str>, aliases: &[(String, Option<String>)]) -> String {
     if let Some((a, _)) = aliases.iter().find(|(a, _)| a == dest) {
         return a.clone();

@@ -614,7 +614,7 @@ pub fn running_program(t: &TabInfo) -> Option<String> {
 }
 
 /// The host a tab running `ssh` is connected to: the alias from `~/.ssh/config` when there is
-/// one, else its own name (see [`crate::ssh::label`]). From ssh's arguments as `ps` shows them,
+/// one, else the host as you typed it (see [`crate::ssh::label`]). From ssh's arguments as `ps` shows them,
 /// else the command line.
 pub fn ssh_host(t: &TabInfo) -> Option<String> {
     if running_program(t).as_deref() != Some("ssh") {
