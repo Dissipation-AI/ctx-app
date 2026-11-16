@@ -588,9 +588,13 @@ pub fn tab_lines(t: &TabInfo) -> (String, String) {
     };
     let label = match (&t.name, running_program(t)) {
         (Some(n), _) => n.clone(),
-        // Connected somewhere: where, in brackets (drawn in italics), instead of "ssh".
+        // Connected somewhere: where, in brackets (drawn in italics), instead of "ssh"; then what
+        // runs there, when the remote shell says (`[swirles] python`).
         (None, Some(p)) => match ssh_host(t) {
-            Some(h) => format!("[{h}]"),
+            Some(h) => match t.remote_command.as_deref() {
+                Some(c) => format!("[{h}] {}", program_of(c)),
+                None => format!("[{h}]"),
+            },
             None => p,
         },
         (None, None) => folder.rsplit('/').find(|p| !p.is_empty()).unwrap_or("~").to_string(),
@@ -614,7 +618,8 @@ pub fn running_program(t: &TabInfo) -> Option<String> {
 }
 
 /// The host a tab running `ssh` is connected to: the alias from `~/.ssh/config` when there is
-/// one, else the host as you typed it (see [`crate::ssh::label`]). From ssh's arguments as `ps` shows them,
+/// one, else the machine's own name as its shell reports it, else the host as typed (see
+/// [`crate::ssh::label`]). From ssh's arguments as `ps` shows them,
 /// else the command line.
 pub fn ssh_host(t: &TabInfo) -> Option<String> {
     if running_program(t).as_deref() != Some("ssh") {
@@ -628,7 +633,7 @@ pub fn ssh_host(t: &TabInfo) -> Option<String> {
         let at = words.iter().position(|w| w.rsplit('/').next() == Some("ssh"))?;
         Some(words[at..].iter().take_while(|w| !matches!(w.as_str(), ";" | "&&" | "||" | "|")).cloned().collect())
     })?;
-    crate::ssh::tab_host(&args, t.remote_host.as_deref())
+    crate::ssh::tab_host(&args, t.remote_name.as_deref().or(t.remote_host.as_deref()))
 }
 
 /// Programs that run other programs, named in `ps` instead of what they run.
@@ -1843,7 +1848,28 @@ mod tests {
             permissions_of: None,
             owner: None,
             remote_host: None,
+            remote_command: None,
+            remote_name: None,
         }
+    }
+
+    /// Inside ssh: where, in brackets, then what runs there while the remote shell says.
+    #[test]
+    fn ssh_labels() {
+        let mut t = info(4);
+        t.name = None;
+        t.state = "busy".into();
+        t.running = Some("ssh -p 2222 me@10.9.8.7".into());
+        t.remote_host = Some("10.9.8.7".into());
+        assert_eq!(tab_lines(&t).0, "[10.9.8.7]");
+        // The machine's own name, once its shell reports it.
+        t.remote_name = Some("ctx-test-box".into());
+        assert_eq!(tab_lines(&t).0, "[ctx-test-box]");
+        t.remote_command = Some("uv run python train.py".into());
+        assert_eq!(tab_lines(&t).0, "[ctx-test-box] uv");
+        t.remote_command = Some("python train.py --epochs 3".into());
+        assert_eq!(tab_lines(&t).0, "[ctx-test-box] python");
+        assert_eq!(ssh_host(&t).as_deref(), Some("ctx-test-box"));
     }
 
     #[test]
