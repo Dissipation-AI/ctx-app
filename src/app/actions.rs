@@ -1074,7 +1074,7 @@ impl App {
     }
 }
 
-const HISTORY_OFFER: &str = "Your tabs share ↑ history as commands run (zsh's share_history), so other tabs' and agents' commands turn up in yours.";
+const HISTORY_OFFER: &str = "↑ brings up other tabs' commands as they run (zsh's share_history).";
 
 fn outside_about() {
     super::outside(plat::about);

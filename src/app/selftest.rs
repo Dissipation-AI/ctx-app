@@ -600,6 +600,22 @@ pub fn start() {
         r.check(answer.get() == Some(true) && app.banners.is_empty(), "clicking its button answers it");
         r.check((top(app) - bare).abs() < 0.5, "and with none left, the strip goes");
     }));
+    // A problem goes ahead of an offer that's showing; the offer waits and comes back after.
+    steps.push_back(Box::new(|app, r| {
+        app.banner("An offer nobody has answered", &["Do It"], false, |_, _| {});
+        app.alert("Lost the ctx server", "it stopped");
+        r.check(
+            app.banners.front().is_some_and(|b| b.text.starts_with("Lost the ctx server")),
+            "a problem shows ahead of an offer",
+        );
+        app.answer_banner(None);
+        r.check(
+            app.banners.front().is_some_and(|b| b.text.starts_with("An offer")),
+            "and the offer comes back after it",
+        );
+        app.answer_banner(None);
+        r.check(app.banners.is_empty(), "and goes when it's answered");
+    }));
     // The Agents window: closing it only hides it; its tabs keep running, and nothing asks.
     steps.push_back(Box::new(|_, r| {
         // An agent opens a tab, as an agent's hook does: the server makes the Agents window.

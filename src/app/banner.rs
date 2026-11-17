@@ -1,5 +1,6 @@
 //! Banners: what CTX tells or asks you, in a strip under the tab bar instead of a dialog. One
-//! shows at a time (in every window, so it's seen whichever is in front); the rest wait their turn.
+//! shows at a time (in every window, so it's seen whichever is in front); the rest wait their turn,
+//! problems ahead of news and offers.
 //! A button answers it, the × closes it; either way the next one shows.
 
 use super::App;
@@ -112,13 +113,21 @@ impl App {
         if self.banners.iter().any(|b| b.text == text) {
             return;
         }
-        self.banners.push_back(Banner {
+        let b = Banner {
             text,
             buttons: buttons.iter().map(|b| b.to_string()).collect(),
             then: Some(Box::new(then)),
             warning,
-        });
-        if self.banners.len() == 1 {
+        };
+        // A problem goes ahead of news and offers, even the one showing (which waits its turn
+        // again): "Lost the ctx server" mustn't wait behind an offer nobody has answered.
+        let at = if warning {
+            self.banners.iter().position(|x| !x.warning).unwrap_or(self.banners.len())
+        } else {
+            self.banners.len()
+        };
+        self.banners.insert(at, b);
+        if at == 0 {
             self.relayout_all();
         }
     }

@@ -59,7 +59,7 @@ fn parse(out: &str) -> Option<Found> {
 /// What goes at the end of your `.zshrc`.
 pub const PER_TAB: &str = "
 # Added by CTX: each tab keeps its own ↑ history while it's open, instead of taking in other
-# tabs' commands (agents' too) as they run. New tabs still start with everything saved so far.
+# tabs' commands as they run. New tabs still start with everything saved so far.
 unsetopt share_history
 setopt inc_append_history
 ";
