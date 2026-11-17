@@ -8,6 +8,8 @@
 #   scripts/install-mac.sh --keep-tcc      leave privacy permissions as they are
 #   scripts/install-mac.sh --keep-server   don't stop the running ctx server (keeps your tabs)
 #   scripts/install-mac.sh --uninstall     only remove the installed CTX.app
+#   scripts/install-mac.sh --first-run     also as on a first run: unlink the command-line tools
+#                                          (CTX.app offers them again) and register the server anew
 #   scripts/install-mac.sh --dest DIR      install into DIR (default /Applications)
 #
 # Stopping the server ends the shells in every open tab (their output is kept, and the tabs can
@@ -23,15 +25,17 @@ reset_tcc=1
 stop_server=1
 install=1
 yes=0
+first_run=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --debug) profile=debug ;;
         --keep-tcc) reset_tcc=0 ;;
         --keep-server) stop_server=0 ;;
         --uninstall) install=0 ;;
+        --first-run) first_run=1 ;;
         --dest) dest=$2; shift ;;
         --yes|-y) yes=1 ;;
-        -h|--help) sed -n 2,16p "$0"; exit 0 ;;
+        -h|--help) sed -n 2,18p "$0"; exit 0 ;;
         *) echo "install-mac: unknown option $1" >&2; exit 2 ;;
     esac
     shift
@@ -88,14 +92,18 @@ for d in $old; do
     step "Removing $d"
     rm -rf "$d"
 done
-for link in /usr/local/bin/ctx /usr/local/bin/bro "$HOME/.local/bin/ctx" "$HOME/.local/bin/bro"; do
-    if [ -L "$link" ] && readlink "$link" | grep -q 'CTX.app/'; then
-        rm -f "$link" && echo "removed $link"
-    fi
-done
+# The links into CTX.app stay good across a reinstall at the same place, so they're kept (no
+# offer to install them again), unless this uninstalls or starts over as a first run.
+if [ $install = 0 ] || [ $first_run = 1 ]; then
+    for link in /usr/local/bin/ctx /usr/local/bin/bro "$HOME/.local/bin/ctx" "$HOME/.local/bin/bro"; do
+        if [ -L "$link" ] && readlink "$link" | grep -q 'CTX.app/'; then
+            rm -f "$link" && echo "removed $link"
+        fi
+    done
+fi
 # The first-run state, so the install offer and the LaunchAgent registration happen again.
 state="$HOME/Library/Application Support/ctx/app-state.json"
-if [ -f "$state" ] && command -v python3 > /dev/null; then
+if [ $first_run = 1 ] && [ -f "$state" ] && command -v python3 > /dev/null; then
     python3 - "$state" <<'PY'
 import json, sys
 p = sys.argv[1]

@@ -109,7 +109,7 @@ impl Client {
                         .map_err(|e| ConnectError::NoServer(e.to_string()))?;
                     return Ok((Client { writer: stream, pending, next_id: 1 }, rx));
                 }
-                Some(Welcome::VersionMismatch { message, busy_tabs, .. }) => {
+                Some(Welcome::VersionMismatch { busy_tabs, server_protocol, .. }) => {
                     if busy_tabs.is_empty() && !restarted {
                         let mut frame = (RESTART_MAGIC.len() as u32).to_le_bytes().to_vec();
                         frame.extend_from_slice(RESTART_MAGIC);
@@ -119,7 +119,7 @@ impl Client {
                         wait_for_server(Duration::from_secs(5));
                         continue;
                     }
-                    return Err(ConnectError::Mismatch(message));
+                    return Err(ConnectError::Mismatch(mismatch_message(server_protocol, &busy_tabs)));
                 }
                 None => return Err(ConnectError::NoServer("The ctx server closed the connection.".into())),
             }
@@ -210,6 +210,55 @@ fn read_loop(mut stream: UnixStream, pending: Arc<Mutex<HashMap<u64, Waiter>>>, 
 }
 
 /// Wait until a server accepts connections (after a restart, or after launchd starts it).
+/// The running server speaks another protocol and has busy tabs, so it didn't restart by itself.
+fn mismatch_message(server_protocol: u32, busy: &[u64]) -> String {
+    let tabs: Vec<String> = busy.iter().map(|t| t.to_string()).collect();
+    let tabs = match tabs.len() {
+        1 => format!("tab {}", tabs[0]),
+        n => format!("tabs {} and {}", tabs[..n - 1].join(", "), tabs[n - 1]),
+    };
+    format!(
+        "The running ctx server is another version (protocol {server_protocol}; CTX speaks {PROTOCOL_VERSION}). Restarting it stops what's running in {tabs}; every tab comes back."
+    )
+}
+
+/// Restart a server that speaks another protocol, as `ctx restart server without asking` does:
+/// the restart request any version reads (servers since it reopen every tab), else, for a server
+/// from before it, through launchd (its tabs end; the app offers to reopen them).
+pub fn restart_mismatched() -> Result<(), String> {
+    let socket = paths().socket();
+    let mut stream = UnixStream::connect(&socket).map_err(|e| format!("No ctx server at {}: {e}", socket.display()))?;
+    write_message(&mut stream, &hello()).map_err(|e| e.to_string())?;
+    if let Ok(Some(Welcome::Accepted { .. })) = read_message::<Welcome>(&mut stream) {
+        return Ok(());
+    }
+    // ctx_server::server::RESTART_ANYWAY_MAGIC.
+    let magic: &[u8] = b"ctx: restart the server, stopping what runs";
+    let mut frame = (magic.len() as u32).to_le_bytes().to_vec();
+    frame.extend_from_slice(magic);
+    let _ = stream.write_all(&frame);
+    drop(stream);
+    if wait_for_server(Duration::from_secs(5)) {
+        return Ok(());
+    }
+    if cfg!(target_os = "macos") && !Paths::is_custom() {
+        // SAFETY: getuid can't fail.
+        let job = format!("gui/{}/com.ctx.server", unsafe { libc::getuid() });
+        let k = std::process::Command::new("/bin/launchctl").args(["kickstart", "-k", &job]).output();
+        match k {
+            Ok(o) if !o.status.success() => {
+                return Err(format!("launchd couldn't restart it: {}", String::from_utf8_lossy(&o.stderr).trim()));
+            }
+            Err(e) => return Err(format!("couldn't run launchctl: {e}")),
+            Ok(_) => {}
+        }
+        if wait_for_server(Duration::from_secs(10)) {
+            return Ok(());
+        }
+    }
+    Err("it didn't come back. `ctx status` says more.".into())
+}
+
 pub fn wait_for_server(limit: Duration) -> bool {
     let socket = paths().socket();
     let start = Instant::now();
