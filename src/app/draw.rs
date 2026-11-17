@@ -432,6 +432,7 @@ impl App {
         let find_focused = win.focus == Focus::Find && key;
         let reopen = win.reopen_offer.as_ref().map(|t| t.len());
         let paste = win.paste_offer.as_ref().map(|(_, t)| t.clone());
+        let history = win.history_offer.is_some();
         let hover_hit = win.hover;
         let drag = win.tab_press.filter(|p| p.dragging).map(|p| (p.index, p.x));
         let full = matches!(dirty, Some(Dirty::All));
@@ -458,6 +459,11 @@ impl App {
                     let l = chrome::reopen_layout(cw, strip_y);
                     let text = format!("Reopen {n} {} from last time?", if n == 1 { "tab" } else { "tabs" });
                     chrome::draw_reopen(c, &l, &text, hover_hit, &fonts, &col, scale);
+                    strip_y += chrome::STRIP_H;
+                }
+                if history {
+                    let l = chrome::history_layout(cw, strip_y);
+                    chrome::draw_history(c, &l, hover_hit, &fonts, &col, scale);
                     strip_y += chrome::STRIP_H;
                 }
                 if let Some(t) = &paste {
@@ -601,6 +607,7 @@ impl App {
                     "dialog": w.dialog.as_ref().map(|d| d.title.clone()),
                     "find": w.find.as_ref().map(|f| json!({"text": f.field.text, "status": f.status})),
                     "reopen_offer": w.reopen_offer,
+                    "history_offer": w.history_offer,
                 })
             })
             .collect();
@@ -638,6 +645,12 @@ impl App {
         let mut strip_y = win.bar.height;
         if win.reopen_offer.is_some() {
             if let Some(h) = chrome::reopen_layout(cw, strip_y).hit(x, y) {
+                return h;
+            }
+            strip_y += chrome::STRIP_H;
+        }
+        if win.history_offer.is_some() {
+            if let Some(h) = chrome::history_layout(cw, strip_y).hit(x, y) {
                 return h;
             }
             strip_y += chrome::STRIP_H;
