@@ -113,6 +113,8 @@ impl App {
         ChromeFonts {
             label: self.fonts.ui(12.5 * scale, false),
             label_bold: self.fonts.ui(12.5 * scale, true),
+            label_italic: self.fonts.ui_styled(12.5 * scale, false, true),
+            label_bold_italic: self.fonts.ui_styled(12.5 * scale, true, true),
             small: self.fonts.ui(10.5 * scale, false),
             title: self.fonts.ui(16.0 * scale, true),
         }
@@ -163,6 +165,7 @@ impl App {
                     status: self.statuses.get(&t.number).copied().unwrap_or(Status::Idle),
                     background,
                     themed,
+                    remote: t.name.is_none() && super::ssh_host(t).is_some(),
                 }
             })
             .collect()

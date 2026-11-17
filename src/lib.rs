@@ -16,6 +16,7 @@ pub mod process;
 pub mod render;
 pub mod selection;
 pub mod shortcuts;
+pub mod ssh;
 pub mod state;
 pub mod text;
 pub mod theme;

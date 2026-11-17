@@ -5,12 +5,17 @@
 /// (`claude`, not the versioned file `2.1.310` it points to). Else the executable's name.
 #[cfg(target_os = "macos")]
 pub fn name(pid: i32) -> Option<String> {
-    argv0(pid).map(|a| base_name(&a).to_string()).filter(|n| !n.is_empty()).or_else(|| executable_name(pid))
+    args(pid)
+        .and_then(|a| a.into_iter().next())
+        .map(|a| base_name(&a).to_string())
+        .filter(|n| !n.is_empty())
+        .or_else(|| executable_name(pid))
 }
 
-/// `pid`'s `argv[0]`, from `KERN_PROCARGS2` (any process of the same user).
+/// `pid`'s arguments, `argv[0]` first, as `ps -o args` shows them: from `KERN_PROCARGS2` (any
+/// process of the same user).
 #[cfg(target_os = "macos")]
-fn argv0(pid: i32) -> Option<String> {
+pub fn args(pid: i32) -> Option<Vec<String>> {
     // SAFETY: sysctl writes at most `size` bytes into `buf`, and `size` back.
     unsafe {
         let mut argmax: libc::c_int = 0;
@@ -34,22 +39,22 @@ fn argv0(pid: i32) -> Option<String> {
             return None;
         }
         buf.truncate(size);
-        procargs_argv0(&buf)
+        procargs(&buf)
     }
 }
 
-/// `argv[0]` from a `KERN_PROCARGS2` buffer: argc (4 bytes), the executable's path, NUL padding,
-/// then the arguments, each NUL-terminated.
+/// The arguments in a `KERN_PROCARGS2` buffer: argc (4 bytes), the executable's path, NUL
+/// padding, then argc arguments, each NUL-terminated (the environment follows).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn procargs_argv0(buf: &[u8]) -> Option<String> {
-    let rest = buf.get(4..)?;
+fn procargs(buf: &[u8]) -> Option<Vec<String>> {
+    let argc = i32::from_ne_bytes(buf.get(..4)?.try_into().ok()?).max(0) as usize;
+    let rest = &buf[4..];
     let after_path = rest.iter().position(|b| *b == 0)?;
     let rest = &rest[after_path..];
     let start = rest.iter().position(|b| *b != 0)?;
-    let rest = &rest[start..];
-    let end = rest.iter().position(|b| *b == 0).unwrap_or(rest.len());
-    let a = String::from_utf8_lossy(&rest[..end]).into_owned();
-    (!a.is_empty()).then_some(a)
+    let args: Vec<String> =
+        rest[start..].split(|b| *b == 0).take(argc).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+    args.first().is_some_and(|a| !a.is_empty()).then_some(args)
 }
 
 /// The last part of a path (`/usr/bin/python3` → `python3`).
@@ -83,6 +88,19 @@ fn c_chars(s: &[libc::c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// `pid`'s arguments, `argv[0]` first (`/proc/<pid>/cmdline`).
+#[cfg(not(target_os = "macos"))]
+pub fn args(pid: i32) -> Option<Vec<String>> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let args: Vec<String> = raw
+        .strip_suffix(&[0])
+        .unwrap_or(&raw)
+        .split(|b| *b == 0)
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect();
+    args.first().is_some_and(|a| !a.is_empty()).then_some(args)
+}
+
 /// The program `pid` is running (`/proc/<pid>/comm`).
 #[cfg(not(target_os = "macos"))]
 pub fn name(pid: i32) -> Option<String> {
@@ -102,12 +120,12 @@ mod tests {
     }
 
     #[test]
-    fn argv0_from_procargs() {
-        // argc, the executable's path, padding, then argv.
+    fn args_from_procargs() {
+        // argc, the executable's path, padding, then argv, then the environment.
         let mut buf = 2i32.to_ne_bytes().to_vec();
-        buf.extend_from_slice(b"/Users/me/.local/share/claude/versions/2.1.310\0\0\0claude\0--resume\0");
-        assert_eq!(super::procargs_argv0(&buf).as_deref(), Some("claude"));
-        assert_eq!(super::procargs_argv0(&buf[..2]), None);
+        buf.extend_from_slice(b"/Users/me/.local/share/claude/versions/2.1.310\0\0\0claude\0--resume\0HOME=/x\0");
+        assert_eq!(super::procargs(&buf), Some(vec!["claude".to_string(), "--resume".to_string()]));
+        assert_eq!(super::procargs(&buf[..2]), None);
         assert_eq!(super::base_name("/usr/bin/python3"), "python3");
         assert_eq!(super::base_name("claude"), "claude");
         assert_eq!(super::base_name("-zsh"), "-zsh");
@@ -134,5 +152,21 @@ mod tests {
         let _ = child.wait();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(name.as_deref(), Some("my-sleeper"));
+    }
+
+    #[test]
+    fn a_processs_arguments() {
+        let mut child = std::process::Command::new("/bin/sleep").arg("5").spawn().unwrap();
+        let mut args = None;
+        for _ in 0..50 {
+            args = super::args(child.id() as i32);
+            if args.as_ref().is_some_and(|a| a.len() == 2) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(args, Some(vec!["/bin/sleep".to_string(), "5".to_string()]));
     }
 }
