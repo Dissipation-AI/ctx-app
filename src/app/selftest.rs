@@ -573,6 +573,46 @@ pub fn start() {
         r.check(answer.get() == Some(true) && app.banners.is_empty(), "clicking its button answers it");
         r.check((top(app) - bare).abs() < 0.5, "and with none left, the strip goes");
     }));
+    // The Agents window: closing it only hides it; its tabs keep running, and nothing asks.
+    steps.push_back(Box::new(|_, r| {
+        // An agent opens a tab, as an agent's hook does: the server makes the Agents window.
+        let ctx = std::env::var("CTX_BIN").unwrap_or_else(|_| "ctx".into());
+        let agent = |args: &[&str]| {
+            std::process::Command::new(&ctx)
+                .args(args)
+                .env("CTX_AGENT_NAME", "selftest agent")
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        let ok = agent(&["open", "tab", "named", "Agent busy"])
+            && agent(&["run", "in", "Agent busy", "sleep 30", "without", "waiting"]);
+        r.check(ok, "an agent's ctx opens a tab and runs something in it");
+    }));
+    steps.push_back(Box::new(|_, _| {}));
+    steps.push_back(Box::new(|app, r| {
+        let Some(a) = app.agent_window() else { return r.check(false, "an Agents window was opened") };
+        app.open_win(a);
+    }));
+    steps.push_back(Box::new(|_, _| {}));
+    steps.push_back(Box::new(|app, r| {
+        let Some(a) = app.agent_window() else { return r.check(false, "an Agents window was opened") };
+        app.close_window(a, false);
+        r.check(
+            !app.wins.contains_key(&a) && app.banners.is_empty() && !app.state.agent_window_shown,
+            "closing the Agents window hides it, without asking",
+        );
+    }));
+    steps.push_back(Box::new(|_, _| {}));
+    steps.push_back(Box::new(|app, r| {
+        let a = app.agent_window();
+        let busy = app
+            .list
+            .windows
+            .iter()
+            .find(|w| Some(w.number) == a)
+            .is_some_and(|w| w.tabs.iter().any(|t| t.state == "busy"));
+        r.check(busy, "and its tabs keep running");
+    }));
     // Agents: the panel lists agents and edits an agent's instructions. (The throwaway server has
     // no agents' accounts, so the test gives the panel one whose home is a folder of ours.)
     steps.push_back(Box::new(|app, r| {
