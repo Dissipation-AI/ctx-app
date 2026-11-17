@@ -165,7 +165,7 @@ impl App {
                     status: self.statuses.get(&t.number).copied().unwrap_or(Status::Idle),
                     background,
                     themed,
-                    remote: t.name.is_none() && super::ssh_host(t).is_some(),
+                    remote: if t.name.is_none() { super::ssh_host(t).map(|h| h.len() + 2).unwrap_or(0) } else { 0 },
                 }
             })
             .collect()
