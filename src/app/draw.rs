@@ -145,6 +145,7 @@ impl App {
         let (focused, selected, has_tiles) = (win.focused, win.selected, win.tiles.is_some());
         // A panel shows instead of the tabs: none of them is the one on screen.
         let panel = win.panel.is_some();
+        let rename = win.rename.clone();
         info.tabs
             .iter()
             .map(|t| {
@@ -172,6 +173,7 @@ impl App {
                     background,
                     themed,
                     remote: if t.name.is_none() { super::ssh_host(t).map(|h| h.len() + 2).unwrap_or(0) } else { 0 },
+                    rename: rename.as_ref().filter(|r| r.tab == t.number).map(|r| (r.field.clone(), r.error.clone())),
                 }
             })
             .collect()
@@ -474,6 +476,7 @@ impl App {
                     always_close,
                     loading,
                     open: open_button,
+                    caret_on: caret_on && key,
                 };
                 chrome::draw_bar(c, &frame, &fonts, &col, scale);
                 let mut strip_y = frame.layout.height;
