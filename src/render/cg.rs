@@ -221,7 +221,7 @@ fn shaped_line(g: &str, font: &CTFont) -> CFRetained<CTLine> {
 #[derive(Default)]
 pub struct FontCache {
     sets: HashMap<(String, u64, u64), Rc<Fonts>>,
-    ui: HashMap<(u64, bool), Rc<UiFont>>,
+    ui: HashMap<(u64, bool, bool), Rc<UiFont>>,
 }
 
 impl FontCache {
@@ -232,7 +232,15 @@ impl FontCache {
 
     /// The interface font (the system font) at `px` pixels.
     pub fn ui(&mut self, px: f64, bold: bool) -> Rc<UiFont> {
-        self.ui.entry(((px * 100.0) as u64, bold)).or_insert_with(|| Rc::new(UiFont::new(px, bold))).clone()
+        self.ui_styled(px, bold, false)
+    }
+
+    /// The interface font, italic too if asked (upright where there's no italic).
+    pub fn ui_styled(&mut self, px: f64, bold: bool, italic: bool) -> Rc<UiFont> {
+        self.ui
+            .entry(((px * 100.0) as u64, bold, italic))
+            .or_insert_with(|| Rc::new(UiFont::new(px, bold, italic)))
+            .clone()
     }
 
     /// Drop sets nobody uses (after font size changes).
@@ -250,7 +258,7 @@ pub struct UiFont {
 }
 
 impl UiFont {
-    fn new(px: f64, bold: bool) -> UiFont {
+    fn new(px: f64, bold: bool, italic: bool) -> UiFont {
         let weight = if bold {
             unsafe { objc2_app_kit::NSFontWeightSemibold }
         } else {
@@ -260,6 +268,7 @@ impl UiFont {
         // NSFont and CTFont are toll-free bridged.
         let ptr = Retained::into_raw(ns) as *mut CTFont;
         let font = unsafe { CFRetained::from_raw(NonNull::new(ptr).unwrap()) };
+        let font = if italic { with_traits(&font, px, ITALIC).unwrap_or(font) } else { font };
         let ascent = unsafe { font.ascent() };
         let descent = unsafe { font.descent() };
         UiFont { font, ascent, descent }

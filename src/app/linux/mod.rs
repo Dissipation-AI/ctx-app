@@ -291,6 +291,11 @@ impl Drop for Views {
     }
 }
 
+/// The window now shows `ctx` window `n` (the one shown at launch, taken over).
+pub fn renumber(v: &Views, n: u64) {
+    WINDOWS.with(|w| w.borrow_mut().insert(v.window.id(), n));
+}
+
 pub fn make_window(n: u64, frame: Option<[f64; 4]>, size: (f64, f64), index: usize, titlebar_tabs: bool) -> Views {
     let el = LOOP.with(|l| l.get());
     assert!(!el.is_null(), "windows are made inside an event loop callback");

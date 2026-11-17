@@ -49,6 +49,11 @@ pub struct TabItem {
     pub background: Rgb,
     /// The tab has a theme of its own: unselected, it's tinted with it so colours mark projects.
     pub themed: bool,
+    /// How much of the label (bytes) is the host it's connected to over ssh, `[swirles]`: drawn
+    /// in italics. 0: none.
+    pub remote: usize,
+    /// Its name is being edited here: the field, and why the last name was refused.
+    pub rename: Option<(Field, Option<String>)>,
 }
 
 /// What an unselected tab is filled with (`None`: the bar shows through).
@@ -126,6 +131,8 @@ pub enum Hit {
     ReopenNo,
     PasteYes,
     PasteNo,
+    BannerButton(usize),
+    BannerClose,
 }
 
 /// Where a tab's activity badge is (a click there opens Activity), in points.
@@ -270,6 +277,8 @@ impl BarLayout {
 pub struct ChromeFonts {
     pub label: std::rc::Rc<UiFont>,
     pub label_bold: std::rc::Rc<UiFont>,
+    pub label_italic: std::rc::Rc<UiFont>,
+    pub label_bold_italic: std::rc::Rc<UiFont>,
     pub small: std::rc::Rc<UiFont>,
     pub title: std::rc::Rc<UiFont>,
 }
@@ -285,6 +294,12 @@ pub struct BarFrame<'a> {
     pub width: f64,
     /// Every tab shows its close button, not only the one under the pointer.
     pub always_close: bool,
+    /// Not connected to the server yet: a spinner where the tabs go.
+    pub loading: bool,
+    /// The button whose panel is showing.
+    pub open: Option<Button>,
+    /// A tab name being edited shows its caret.
+    pub caret_on: bool,
 }
 
 fn px(r: Rect, s: f64) -> Rect {
@@ -332,6 +347,7 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
             f.active,
             f.layout.one_line,
             f.always_close,
+            f.caret_on,
         );
         // A thin separator between plain unselected neighbours.
         let next = f.items.get(i + 1);
@@ -343,6 +359,28 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
         }
     }
     c.clip(None);
+    if f.loading && f.items.is_empty() {
+        let (cx, cy, rad) = (strip.x + 18.0 * s, bar.h / 2.0, 6.0 * s);
+        let phase = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+            / 125
+            % 8) as usize;
+        for i in 0..8 {
+            let a = i as f64 * std::f64::consts::TAU / 8.0;
+            let d = 2.4 * s;
+            let fade = ((i + 8 - phase) % 8) as f64 / 8.0;
+            c.fill_rounded(
+                col.dim,
+                1.0 - fade * 0.8,
+                cx + rad * a.cos() - d / 2.0,
+                cy + rad * a.sin() - d / 2.0,
+                d,
+                d,
+                [d / 2.0; 4],
+            );
+        }
+        let ty = (bar.h - fonts.label.height()) / 2.0;
+        c.text(&fonts.label, "Starting ctx…", cx + rad + 10.0 * s, ty, strip.w, col.dim, Trunc::Tail);
+    }
     // Overflow chevrons.
     for (r, glyph, h) in [(f.layout.left, "‹", Hit::ScrollLeft), (f.layout.right, "›", Hit::ScrollRight)] {
         if let Some(r) = r {
@@ -383,10 +421,13 @@ pub fn draw_bar<C: Canvas>(c: &mut C, f: &BarFrame, fonts: &ChromeFonts, col: &C
     // Overview, History, Activity.
     for (b, r) in &f.layout.buttons {
         let r = px(*r, s);
-        if f.hover == Some(Hit::Button(*b)) {
+        let open = f.open == Some(*b);
+        if open {
+            c.fill_rounded(col.accent, 0.28, r.x + 2.0 * s, r.y, r.w - 4.0 * s, r.h, [7.0 * s; 4]);
+        } else if f.hover == Some(Hit::Button(*b)) {
             c.fill_rounded(col.hover, 1.0, r.x + 2.0 * s, r.y, r.w - 4.0 * s, r.h, [7.0 * s; 4]);
         }
-        draw_icon(c, *b, r, col.dim, s);
+        draw_icon(c, *b, r, if open { col.accent } else { col.dim }, s);
     }
 }
 
@@ -427,6 +468,7 @@ fn draw_tab<C: Canvas>(
     active: bool,
     one_line: bool,
     always_close: bool,
+    caret_on: bool,
 ) {
     let rad = 8.0 * s;
     let (x, w) = if item.selected { (r.x, r.w) } else { (r.x + 1.0 * s, r.w - 2.0 * s) };
@@ -474,7 +516,8 @@ fn draw_tab<C: Canvas>(
         c.stroke(&path, 1.4 * s, ink, 1.0);
         left = cr.x + cr.w + 6.0 * s;
     }
-    let lf = if item.selected { &fonts.label_bold } else { &fonts.label };
+    let (lf, lfi) =
+        if item.selected { (&fonts.label_bold, &fonts.label_bold_italic) } else { (&fonts.label, &fonts.label_italic) };
     let lh = lf.height();
     let ph = fonts.small.height();
     let ty = if one_line { (top + (h - lh) / 2.0).round() } else { (top + (h - lh - ph - 1.0 * s) / 2.0).round() };
@@ -506,6 +549,23 @@ fn draw_tab<C: Canvas>(
     }
     let avail = (right - left).max(10.0 * s);
     let strong = if item.selected && active { col.text } else { mix(col.text, under, 0.2) };
+    if let Some((field, error)) = &item.rename {
+        // Being renamed: the name in a field where it shows; why a name was refused under it (or,
+        // on one line, in place of the folder).
+        let fr = Rect::new(left - 6.0 * s, ty - 3.0 * s, (x + w - 6.0 * s) - (left - 6.0 * s), lh + 6.0 * s);
+        ui::draw_field(c, field, fr, lf, col, true, s, caret_on);
+        if !one_line {
+            match error {
+                Some(e) => {
+                    c.text(&fonts.small, e, left, line2 + 2.0 * s, x + w - 10.0 * s - left, col.waiting, Trunc::Tail);
+                }
+                None => {
+                    draw_details(c, item, &item.path, &fonts.small, left, line2 + 2.0 * s, x + w - 10.0 * s, col, s)
+                }
+            }
+        }
+        return;
+    }
     if one_line {
         // "name — folder", in the two-line fonts: the name large (bold when selected) and whole
         // where it can be, then the rest smaller and dimmer on the same baseline, cut with an
@@ -519,7 +579,7 @@ fn draw_tab<C: Canvas>(
         } else {
             avail
         };
-        let tw = c.text(lf, &item.label, left, ty, cap, strong, Trunc::Tail);
+        let tw = draw_label(c, item, lf, lfi, left, ty, cap, strong);
         let x2 = left + tw;
         if rest && right - x2 > 24.0 * s {
             let small_y = ty + lf.ascent() - fonts.small.ascent();
@@ -528,9 +588,28 @@ fn draw_tab<C: Canvas>(
         }
     } else {
         // First line: the label, what the eye reads first. Second line, smaller and dimmer.
-        c.text(lf, &item.label, left, ty, avail, strong, Trunc::Tail);
+        draw_label(c, item, lf, lfi, left, ty, avail, strong);
         draw_details(c, item, &item.path, &fonts.small, left, line2, x + w - 10.0 * s, col, s);
     }
+}
+
+/// A tab's label, its host part (`[swirles]`) in italics. Returns the width drawn.
+#[allow(clippy::too_many_arguments)]
+fn draw_label<C: Canvas>(
+    c: &mut C,
+    item: &TabItem,
+    lf: &UiFont,
+    italic: &UiFont,
+    x: f64,
+    y: f64,
+    max: f64,
+    ink: Rgb,
+) -> f64 {
+    let Some((host, rest)) = item.label.split_at_checked(item.remote).filter(|_| item.remote > 0) else {
+        return c.text(lf, &item.label, x, y, max, ink, Trunc::Tail);
+    };
+    let w = c.text(italic, host, x, y, max, ink, Trunc::Tail);
+    w + c.text(lf, rest, x + w, y, max - w, ink, Trunc::Tail)
 }
 
 /// A tab's details, from `x2` to `end2` at `line2`: who opened it (an agent), a launcher, then
@@ -798,32 +877,6 @@ pub fn draw_paste<C: Canvas>(
     );
     draw_button(c, l.yes, "Paste", &fonts.label, col, s, hover == Some(Hit::PasteYes), true);
     draw_button(c, l.no, "Cancel", &fonts.label, col, s, hover == Some(Hit::PasteNo), false);
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn draw_reopen<C: Canvas>(
-    c: &mut C,
-    l: &ReopenLayout,
-    text: &str,
-    hover: Option<Hit>,
-    fonts: &ChromeFonts,
-    col: &Colors,
-    s: f64,
-) {
-    let b = px(l.bar, s);
-    c.fill(mix(col.bar, col.accent, 0.12), 1.0, b.x, b.y, b.w, b.h);
-    c.fill(col.line, 1.0, b.x, b.y + b.h - s.max(1.0), b.w, s.max(1.0));
-    c.text(
-        &fonts.label,
-        text,
-        b.x + 12.0 * s,
-        b.y + (b.h - fonts.label.height()) / 2.0,
-        (l.yes.x - 20.0) * s,
-        col.text,
-        Trunc::Tail,
-    );
-    draw_button(c, l.yes, "Reopen", &fonts.label, col, s, hover == Some(Hit::ReopenYes), true);
-    draw_button(c, l.no, "Not Now", &fonts.label, col, s, hover == Some(Hit::ReopenNo), false);
 }
 
 #[cfg(test)]

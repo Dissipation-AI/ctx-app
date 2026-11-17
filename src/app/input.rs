@@ -87,7 +87,7 @@ impl App {
             return keys::Input::Handled;
         }
         match win.focus {
-            Focus::Find | Focus::Panel => {
+            Focus::Find | Focus::Panel | Focus::Rename => {
                 if let Some(k) = ui::field_key(p) {
                     self.field_key(w, k);
                     return keys::Input::Handled;
@@ -156,6 +156,19 @@ impl App {
                     }
                 }
             }
+            Focus::Rename => {
+                let Some(r) = win.rename.as_mut() else { return };
+                let ev = r.field.key(k);
+                if ev == FieldEvent::Changed {
+                    r.error = None;
+                }
+                win.chrome_dirty = true;
+                match ev {
+                    FieldEvent::Submit { .. } | FieldEvent::Tab { .. } => self.finish_rename(w, true),
+                    FieldEvent::Cancel => self.finish_rename(w, false),
+                    _ => {}
+                }
+            }
             Focus::Panel => {
                 let Some(p) = win.panel.as_mut() else { return };
                 let ev = p.field.key(k);
@@ -212,14 +225,19 @@ impl App {
             return;
         }
         match win.focus {
-            Focus::Find | Focus::Panel => {
+            Focus::Find | Focus::Panel | Focus::Rename => {
                 self.field_key(w, FieldKey::Text(text.to_string()));
                 return;
             }
             Focus::Term if win.panel.is_some() => return,
             Focus::Term => {}
         }
-        let Some(tab) = self.focused_tab(w) else { return };
+        let Some(tab) = self.focused_tab(w) else {
+            if self.loading() {
+                self.early_text.push_str(text);
+            }
+            return;
+        };
         let composing = self.views.get_mut(&tab).is_some_and(|v| v.marked.take().is_some());
         self.go_live(tab);
         // Enter from an input method arrives as text.
@@ -285,6 +303,12 @@ impl App {
     // -----------------------------------------------------------------------------------------
 
     pub fn mouse_down(&mut self, w: u64, x: f64, y: f64, clicks: isize, flags: u64, button: u8) {
+        if let Some(t) = self.wins.get(&w).and_then(|x| x.rename.as_ref()).map(|r| r.tab) {
+            if matches!(self.chrome_hit(w, x, y), Hit::Tab { tab, close: false, .. } if tab == t) {
+                return;
+            }
+            self.finish_rename(w, true);
+        }
         let Some(win) = self.wins.get_mut(&w) else { return };
         // A dialog is modal.
         if win.dialog.is_some() {
@@ -352,8 +376,17 @@ impl App {
                     self.open_panel(w, Kind::Activity);
                     return;
                 }
+                // With a panel open, a click on a tab leaves the panel for that tab (the one the panel
+                // opened over too: it isn't the panel).
+                if self.wins.get(&w).is_some_and(|x| x.panel.is_some()) {
+                    self.close_panel(w);
+                    if self.focused_tab(w) != Some(tab) {
+                        self.select_tab(w, tab);
+                    }
+                    return;
+                }
                 if clicks == 2 {
-                    self.rename_dialog(tab);
+                    self.start_rename(tab);
                     return;
                 }
                 let previous = self.focused_tab(w).filter(|t| *t != tab);
@@ -450,10 +483,15 @@ impl App {
                 self.close_find(w);
                 return;
             }
-            Hit::ReopenYes | Hit::ReopenNo => {
-                self.reopen_offer(w, hit == Hit::ReopenYes);
+            Hit::BannerButton(i) => {
+                self.answer_banner(Some(i));
                 return;
             }
+            Hit::BannerClose => {
+                self.answer_banner(None);
+                return;
+            }
+            Hit::ReopenYes | Hit::ReopenNo => return,
             Hit::PasteYes | Hit::PasteNo => {
                 self.paste_offer(w, hit == Hit::PasteYes);
                 return;
@@ -991,6 +1029,7 @@ impl App {
             let field = match win.focus {
                 Focus::Find => win.find.as_ref().map(|f| &f.field),
                 Focus::Panel => win.panel.as_ref().map(|p| &p.field),
+                Focus::Rename => win.rename.as_ref().map(|r| &r.field),
                 Focus::Term => None,
             };
             if let Some(f) = field {
@@ -1423,7 +1462,7 @@ impl App {
             MenuAction::NewTabIn(win) => self.new_tab(win),
             MenuAction::NewTabAs { window, agent } => self.new_tab_as(window, agent),
             MenuAction::Launch { window, folder, command } => self.new_tab_with(window, Some(folder), Some(command)),
-            MenuAction::Rename(t) => self.rename_dialog(t),
+            MenuAction::Rename(t) => self.start_rename(t),
             MenuAction::Close(t) => self.close_tab(t, false),
             MenuAction::Tile(t) => {
                 if let Some(win) = self.window_of(t) {

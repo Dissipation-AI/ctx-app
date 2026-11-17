@@ -30,6 +30,11 @@ pub struct AppState {
     pub offered: Vec<u64>,
     /// The app has run before (first-run setup done).
     pub set_up: bool,
+    /// The "tabs share ↑ history" check is done: zsh doesn't share it, or you answered the bar.
+    pub history_checked: bool,
+    /// You had the Agents window on screen: tabs reopened into it show it again, and its tabs
+    /// are offered in "Reopen N tabs".
+    pub agent_window_shown: bool,
 }
 
 pub fn path(data_dir: &Path) -> PathBuf {

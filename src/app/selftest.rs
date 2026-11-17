@@ -144,6 +144,10 @@ pub fn start() {
         r.window = app.wins.keys().next().copied().unwrap_or(0);
         r.tab = app.focused_tab(r.window).unwrap_or(0);
         r.check(r.window != 0 && r.tab != 0, "a window with a tab is shown");
+        r.check(
+            app.wins.len() == 1 && !app.wins.contains_key(&super::PLACEHOLDER),
+            "the window shown at launch became that window (not a second one)",
+        );
         if let Some(win) = app.wins.get(&r.window) {
             plat::show_window(&win.views, true);
         }
@@ -318,7 +322,34 @@ pub fn start() {
         r.check(n == 1, "closing a tiled tab gives its space to the neighbour");
         let t = app.focused_tab(r.window).unwrap_or(r.tab);
         r.tab = t;
-        app.rename_tab(t, "Self test".into());
+        // Double-clicking a tab renames it in place: no dialog, the name selected in a field.
+        let rect = app.wins.get(&r.window).and_then(|x| x.bar.tabs.iter().find(|x| x.0 == t)).map(|x| x.1);
+        if let Some(rc) = rect {
+            app.mouse_down(r.window, rc.x + rc.w / 2.0, rc.y + rc.h / 2.0, 2, 0, 1);
+            app.mouse_up(r.window, rc.x + rc.w / 2.0, rc.y + rc.h / 2.0, 0, 1);
+        }
+        let editing = app
+            .wins
+            .get(&r.window)
+            .is_some_and(|x| x.dialog.is_none() && x.rename.as_ref().is_some_and(|e| e.tab == t));
+        r.check(editing, "double-clicking a tab edits its name in the bar, with no dialog");
+        type_text(app, r.window, "bad/name");
+        enter(app, r.window);
+    }));
+    steps.push_back(Box::new(|app, r| {
+        let refused = app
+            .wins
+            .get(&r.window)
+            .and_then(|x| x.rename.as_ref())
+            .is_some_and(|e| e.error.is_some() && e.field.text == "bad/name");
+        let no_dialog = app.wins.get(&r.window).is_some_and(|x| x.dialog.is_none());
+        r.check(refused && no_dialog, "a refused name stays in the field with why, with no dialog");
+        // Select it all and type the new name.
+        if let Some(e) = app.wins.get_mut(&r.window).and_then(|x| x.rename.as_mut()) {
+            e.field = crate::app::ui::Field::with_text("Tab name", &e.field.text);
+        }
+        type_text(app, r.window, "Self test");
+        enter(app, r.window);
     }));
     steps.push_back(Box::new(|app, r| {
         let name = app.tab_info(r.tab).and_then(|i| i.name.clone());
@@ -539,6 +570,92 @@ pub fn start() {
             app.input(t, ctx_protocol::AppInput::Key { key: "ctrl-c".into(), text: None });
         }
     }));
+    // Banners: one at a time under the bar, never a dialog; answering shows the next.
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        let top = |app: &App| app.wins.get(&w).map(|x| x.term_rect.y).unwrap_or(0.0);
+        let bare = top(app);
+        let answer = std::rc::Rc::new(std::cell::Cell::new(None));
+        let heard = answer.clone();
+        app.alert("There's a problem in the config file", "line 3: no such setting");
+        app.ask("Close this tab?", "It's running sleep.", "Close", "Cancel", move |_, yes| heard.set(Some(yes)));
+        r.check(app.wins.get(&w).is_some_and(|x| x.dialog.is_none()), "alerts and questions are banners, not dialogs");
+        r.check(
+            app.banners.len() == 2 && (top(app) - bare - chrome::STRIP_H).abs() < 0.5,
+            "two banners take one strip: they show one at a time",
+        );
+        app.answer_banner(None);
+        r.check(
+            app.banners.front().is_some_and(|b| b.text.starts_with("Close this tab")),
+            "closing one shows the next",
+        );
+        // Its first button, clicked where it's drawn.
+        let (cw, y) = app
+            .wins
+            .get(&w)
+            .map(|x| (x.bar.buttons.last().map(|b| b.1.x + b.1.w + 6.0).unwrap_or(800.0), x.bar.height))
+            .unwrap_or((800.0, 40.0));
+        let l = super::banner::layout(cw, y, &["Close".into(), "Cancel".into()]);
+        click_at(app, w, l.buttons[0].x + 4.0, l.buttons[0].y + 4.0, 1, 1);
+        r.check(answer.get() == Some(true) && app.banners.is_empty(), "clicking its button answers it");
+        r.check((top(app) - bare).abs() < 0.5, "and with none left, the strip goes");
+    }));
+    // A problem goes ahead of an offer that's showing; the offer waits and comes back after.
+    steps.push_back(Box::new(|app, r| {
+        app.banner("An offer nobody has answered", &["Do It"], false, |_, _| {});
+        app.alert("Lost the ctx server", "it stopped");
+        r.check(
+            app.banners.front().is_some_and(|b| b.text.starts_with("Lost the ctx server")),
+            "a problem shows ahead of an offer",
+        );
+        app.answer_banner(None);
+        r.check(
+            app.banners.front().is_some_and(|b| b.text.starts_with("An offer")),
+            "and the offer comes back after it",
+        );
+        app.answer_banner(None);
+        r.check(app.banners.is_empty(), "and goes when it's answered");
+    }));
+    // The Agents window: closing it only hides it; its tabs keep running, and nothing asks.
+    steps.push_back(Box::new(|_, r| {
+        // An agent opens a tab, as an agent's hook does: the server makes the Agents window.
+        let ctx = std::env::var("CTX_BIN").unwrap_or_else(|_| "ctx".into());
+        let agent = |args: &[&str]| {
+            std::process::Command::new(&ctx)
+                .args(args)
+                .env("CTX_AGENT_NAME", "selftest agent")
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        let ok = agent(&["open", "tab", "named", "Agent busy"])
+            && agent(&["run", "in", "Agent busy", "sleep 30", "without", "waiting"]);
+        r.check(ok, "an agent's ctx opens a tab and runs something in it");
+    }));
+    steps.push_back(Box::new(|_, _| {}));
+    steps.push_back(Box::new(|app, r| {
+        let Some(a) = app.agent_window() else { return r.check(false, "an Agents window was opened") };
+        app.open_win(a);
+    }));
+    steps.push_back(Box::new(|_, _| {}));
+    steps.push_back(Box::new(|app, r| {
+        let Some(a) = app.agent_window() else { return r.check(false, "an Agents window was opened") };
+        app.close_window(a, false);
+        r.check(
+            !app.wins.contains_key(&a) && app.banners.is_empty() && !app.state.agent_window_shown,
+            "closing the Agents window hides it, without asking",
+        );
+    }));
+    steps.push_back(Box::new(|_, _| {}));
+    steps.push_back(Box::new(|app, r| {
+        let a = app.agent_window();
+        let busy = app
+            .list
+            .windows
+            .iter()
+            .find(|w| Some(w.number) == a)
+            .is_some_and(|w| w.tabs.iter().any(|t| t.state == "busy"));
+        r.check(busy, "and its tabs keep running");
+    }));
     // Agents: the panel lists agents and edits an agent's instructions. (The throwaway server has
     // no agents' accounts, so the test gives the panel one whose home is a folder of ours.)
     steps.push_back(Box::new(|app, r| {
@@ -623,6 +740,69 @@ pub fn start() {
             let _ = std::fs::remove_dir_all(&p.home);
         }
         app.close_panel(r.window);
+    }));
+    // A panel isn't the tab it opened over: that tab's click goes back to it.
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        let Some(t) = app.focused_tab(w) else { return r.check(false, "a tab is focused") };
+        app.state.tab_themes.insert(t, "jet".into());
+        // In view, to be clicked (earlier steps may have scrolled the bar away from it).
+        app.select_tab(w, t);
+        app.layout(w);
+        let button =
+            app.wins.get(&w).and_then(|x| x.bar.buttons.iter().find(|b| b.0 == chrome::Button::Overview)).map(|b| b.1);
+        if let Some(b) = button {
+            click_at(app, w, b.x + b.w / 2.0, b.y + b.h / 2.0, 1, 1);
+        }
+        let open = app.wins.get(&w).and_then(|x| x.panel.as_ref()).is_some_and(|p| p.kind == Kind::Overview);
+        r.check(open, "the Overview button opens Overview");
+        let base = crate::app::ui::colors(&app.theme(None)).bar;
+        let own = crate::app::ui::colors(&app.tab_theme(t)).bar;
+        let now = app.chrome_colors(w).bar;
+        r.check(now == base && now != own, "a panel takes the base theme, not its tab's");
+        let rect = app.wins.get(&w).and_then(|x| x.bar.tabs.iter().find(|x| x.0 == t)).map(|x| x.1);
+        if let Some(rc) = rect {
+            click_at(app, w, rc.x + rc.w / 2.0, rc.y + rc.h / 2.0, 1, 1);
+        }
+        let closed = app.wins.get(&w).is_some_and(|x| x.panel.is_none());
+        r.check(closed && app.focused_tab(w) == Some(t), "clicking the tab the panel opened over goes back to it");
+    }));
+    // More tabs than fit: the bar scrolls all the way to either end, whichever tab is selected.
+    steps.push_back(Box::new(|app, r| {
+        for _ in 0..24 {
+            app.new_tab(r.window);
+        }
+    }));
+    steps.push_back(Box::new(|_, _| {}));
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        let bar = |app: &App| app.wins.get(&w).map(|w| w.bar.clone());
+        let Some(b) = bar(app).filter(|b| b.right.is_some()) else {
+            r.check(false, "24 more tabs overflow the bar");
+            return;
+        };
+        let (first, last) = (b.tabs[0].0, b.tabs[b.tabs.len() - 1].0);
+        let click = |app: &mut App, c: Option<crate::layout::Rect>| {
+            for _ in 0..60 {
+                if let Some(c) = c {
+                    click_at(app, w, c.x + c.w / 2.0, c.y + c.h / 2.0, 1, 1);
+                }
+            }
+        };
+        let fits = |b: &chrome::BarLayout, t: u64| {
+            b.tabs
+                .iter()
+                .find(|x| x.0 == t)
+                .is_some_and(|(_, x)| x.x >= b.strip.x - 0.5 && x.x + x.w <= b.strip.x + b.strip.w + 0.5)
+        };
+        app.select_tab(w, first);
+        click(app, b.right);
+        let after = bar(app).unwrap();
+        r.check(fits(&after, last) && !fits(&after, first), "with the first tab selected, the bar scrolls to the last");
+        app.select_tab(w, last);
+        click(app, b.left);
+        let after = bar(app).unwrap();
+        r.check(fits(&after, first) && !fits(&after, last), "with the last tab selected, the bar scrolls to the first");
     }));
     run(steps, Report::default());
 }

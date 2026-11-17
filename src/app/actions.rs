@@ -54,7 +54,7 @@ impl App {
             }
             Action::RenameTab => {
                 if let Some(t) = tab {
-                    self.rename_dialog(t);
+                    self.start_rename(t);
                 }
             }
             Action::Copy => {
@@ -389,13 +389,47 @@ impl App {
     // Menus of the chrome
     // -----------------------------------------------------------------------------------------
 
-    pub fn rename_dialog(&mut self, tab: u64) {
+    /// Rename `tab` where its name shows in the bar: its name, selected, in a field.
+    pub fn start_rename(&mut self, tab: u64) {
         let current = self.tab_info(tab).and_then(|i| i.name.clone()).unwrap_or_default();
-        self.prompt("Rename tab", "Letters, digits, spaces, - and _.", &current, move |app, name| {
-            if let Some(name) = name {
-                app.rename_tab(tab, name);
-            }
-        });
+        self.edit_name(tab, &current, None);
+    }
+
+    fn edit_name(&mut self, tab: u64, text: &str, error: Option<String>) {
+        let Some(w) = self.window_of(tab) else { return };
+        if self.wins.get(&w).and_then(|x| x.rename.as_ref()).is_some_and(|r| r.tab != tab) {
+            self.finish_rename(w, true);
+        }
+        let Some(win) = self.wins.get_mut(&w) else { return };
+        let field = ui::Field::with_text("Tab name", text);
+        win.rename = Some(super::RenameEdit { tab, field, error });
+        win.focus = Focus::Rename;
+        win.menu = None;
+        win.chrome_dirty = true;
+        self.blink_on = true;
+        self.ensure_ticker();
+        self.redraw_dirty();
+    }
+
+    /// Stop renaming in window `w`: `save` sends the name (Enter, a click elsewhere), else it's
+    /// dropped (Escape). A name the server refuses comes back into the field, with why.
+    pub fn finish_rename(&mut self, w: u64, save: bool) {
+        let Some(win) = self.wins.get_mut(&w) else { return };
+        let Some(r) = win.rename.take() else { return };
+        win.focus = if win.find.is_some() { Focus::Find } else { Focus::Term };
+        win.chrome_dirty = true;
+        let to = r.field.text.trim().to_string();
+        let current = self.tab_info(r.tab).and_then(|i| i.name.clone()).unwrap_or_default();
+        if save && to != current {
+            let tab = r.tab;
+            let req = Request::RenameTab { tab: TabRef::Number(tab), to: to.clone() };
+            self.request(&format!("ctx rename tab {tab} to \"{to}\""), req, move |app, resp| {
+                if let Response::Error(e) = resp {
+                    app.edit_name(tab, &to, Some(e.message));
+                }
+            });
+        }
+        self.redraw_dirty();
     }
 
     fn open_menu(&mut self, w: u64, m: Menu) {
@@ -869,12 +903,20 @@ impl App {
     pub fn tick(&mut self) {
         self.blink_on = !self.blink_on;
         let mut need = false;
+        if self.loading() {
+            for w in self.wins.values_mut() {
+                w.chrome_dirty = true;
+            }
+            need = true;
+        }
         for w in self.wins.values_mut() {
             if !w.visible || !w.key {
                 continue;
             }
             // A caret in a field, or a dialog's.
-            if w.dialog.is_some() || w.focus != Focus::Term && (w.find.is_some() || w.panel.is_some()) {
+            if w.dialog.is_some()
+                || w.focus != Focus::Term && (w.find.is_some() || w.panel.is_some() || w.rename.is_some())
+            {
                 w.chrome_dirty = true;
                 if w.panel.is_some() || w.dialog.is_some() {
                     w.dirty = Some(Dirty::All);
@@ -969,45 +1011,70 @@ impl App {
         if self.loaded.reopen_on_launch != "ask" {
             return;
         }
-        self.request("ctx list closed tabs", Request::ListClosedTabs { limit: 100 }, |app, r| {
+        // Agents' tabs only if you kept their window on screen: they go back into it, not yours.
+        let agents = self.state.agent_window_shown;
+        self.request("ctx list closed tabs", Request::ListClosedTabs { limit: 100 }, move |app, r| {
             let Response::Ok(Output::ClosedTabs(c)) = r else { return };
             let open: Vec<u64> = app.list.windows.iter().flat_map(|w| w.tabs.iter().map(|t| t.number)).collect();
-            let tabs: Vec<u64> = c
+            let ended: Vec<&ClosedTab> = c
                 .tabs
                 .iter()
                 .filter(|t| {
                     t.ended == "interrupted" && !open.contains(&t.number) && !app.state.offered.contains(&t.number)
                 })
-                .map(|t| t.number)
                 .collect();
+            let tabs: Vec<u64> = ended.iter().filter(|t| t.opened_by == "you" || agents).map(|t| t.number).collect();
+            app.state.offered.extend(ended.iter().map(|t| t.number));
+            app.save_state();
             if tabs.is_empty() {
                 return;
             }
-            app.state.offered.extend(tabs.iter().copied());
-            app.save_state();
-            if let Some(w) = app.key_window().or_else(|| app.wins.keys().next().copied()) {
-                if let Some(win) = app.wins.get_mut(&w) {
-                    win.reopen_offer = Some(tabs);
+            let n = tabs.len();
+            let text = format!("Reopen {n} {} from last time?", if n == 1 { "tab" } else { "tabs" });
+            app.banner(text, &["Reopen"], false, move |app, b| {
+                if b == Some(0) {
+                    for t in tabs {
+                        app.reopen(t);
+                    }
                 }
-                app.layout(w);
-                app.dirty_win(w);
-                app.redraw_dirty();
-            }
+            });
         });
     }
 
-    pub fn reopen_offer(&mut self, w: u64, accept: bool) {
-        let tabs = self.wins.get_mut(&w).and_then(|win| win.reopen_offer.take()).unwrap_or_default();
-        if accept {
-            for t in tabs {
-                self.reopen(t);
-            }
+    /// Once, at the first launch: if your zsh shares ↑ history between tabs as commands run, offer
+    /// (in a bar under the tab bar) to keep it per tab. zsh is asked off the main thread.
+    pub fn maybe_offer_history(&mut self) {
+        if self.state.history_checked {
+            return;
         }
-        self.layout(w);
-        self.dirty_win(w);
-        self.redraw_dirty();
+        std::thread::spawn(|| {
+            let found = crate::zsh_history::check(&crate::zsh_history::login_shell());
+            plat::post_from_any_thread(Box::new(move || {
+                super::with_app(|app| {
+                    let Some(f) = found.clone().filter(|f| f.shares) else {
+                        // Not zsh, or nothing shared. (No answer: ask again next launch.)
+                        if found.is_some() {
+                            app.state.history_checked = true;
+                            app.save_state();
+                        }
+                        return;
+                    };
+                    app.banner(HISTORY_OFFER, &["Keep History Per Tab"], false, move |app, b| {
+                        app.state.history_checked = true;
+                        app.save_state();
+                        if b == Some(0)
+                            && let Err(e) = crate::zsh_history::keep_per_tab(&f.zshrc)
+                        {
+                            app.alert(&format!("Couldn't change {}", f.zshrc.display()), &e.to_string());
+                        }
+                    });
+                });
+            }));
+        });
     }
 }
+
+const HISTORY_OFFER: &str = "↑ brings up other tabs' commands as they run (zsh's share_history).";
 
 fn outside_about() {
     super::outside(plat::about);
