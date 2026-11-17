@@ -141,6 +141,21 @@ impl App {
                     FieldEvent::None => {}
                 }
             }
+            Focus::Panel if win.panel.as_ref().is_some_and(|p| p.editor.is_some()) => {
+                let p = win.panel.as_mut().unwrap();
+                let e = p.editor.as_mut().unwrap();
+                win.dirty = Some(Dirty::All);
+                if !e.key(k) {
+                    self.agent_act(w, panels::AgentAct::CloseEditor);
+                } else {
+                    let rows = self.editor_rows(w);
+                    if let Some(e) =
+                        self.wins.get_mut(&w).and_then(|x| x.panel.as_mut()).and_then(|p| p.editor.as_mut())
+                    {
+                        e.scroll_to_caret(rows);
+                    }
+                }
+            }
             Focus::Panel => {
                 let Some(p) = win.panel.as_mut() else { return };
                 let ev = p.field.key(k);
@@ -204,7 +219,12 @@ impl App {
             Focus::Term if win.panel.is_some() => return,
             Focus::Term => {}
         }
-        let Some(tab) = self.focused_tab(w) else { return };
+        let Some(tab) = self.focused_tab(w) else {
+            if self.loading() {
+                self.early_text.push_str(text);
+            }
+            return;
+        };
         let composing = self.views.get_mut(&tab).is_some_and(|v| v.marked.take().is_some());
         self.go_live(tab);
         // Enter from an input method arrives as text.
@@ -435,14 +455,15 @@ impl App {
                 self.close_find(w);
                 return;
             }
-            Hit::ReopenYes | Hit::ReopenNo => {
-                self.reopen_offer(w, hit == Hit::ReopenYes);
+            Hit::BannerButton(i) => {
+                self.answer_banner(Some(i));
                 return;
             }
-            Hit::HistoryKeep | Hit::HistoryClose => {
-                self.history_offer(w, hit == Hit::HistoryKeep);
+            Hit::BannerClose => {
+                self.answer_banner(None);
                 return;
             }
+            Hit::ReopenYes | Hit::ReopenNo => return,
             Hit::PasteYes | Hit::PasteNo => {
                 self.paste_offer(w, hit == Hit::PasteYes);
                 return;
@@ -1276,6 +1297,19 @@ impl App {
         self.with_panel_ctx(w, |p, ctx| panels::hit_test(&panels::layout(p, area, ctx), x, y)).flatten()
     }
 
+    /// The middle of the panel part that does `h` (the self-test clicks there).
+    pub fn panel_hit_center(&mut self, w: u64, h: PanelHit) -> Option<(f64, f64)> {
+        let area = self.panel_area(w)?;
+        self.with_panel_ctx(w, |p, ctx| {
+            panels::layout(p, area, ctx)
+                .iter()
+                .rev()
+                .find(|i| i.hit == Some(h))
+                .map(|i| (i.rect.x + i.rect.w / 2.0, i.rect.y + i.rect.h / 2.0))
+        })
+        .flatten()
+    }
+
     fn panel_hover(&mut self, w: u64, x: f64, y: f64) {
         let h = self.panel_hit(w, x, y);
         if let Some(win) = self.wins.get_mut(&w)
@@ -1289,7 +1323,8 @@ impl App {
 
     fn panel_down(&mut self, w: u64, x: f64, y: f64, clicks: isize) {
         let h = self.panel_hit(w, x, y);
-        let focus = if h == Some(PanelHit::Field) { Focus::Panel } else { Focus::Term };
+        let editing = self.wins.get(&w).and_then(|x| x.panel.as_ref()).is_some_and(|p| p.editor.is_some());
+        let focus = if h == Some(PanelHit::Field) || editing { Focus::Panel } else { Focus::Term };
         self.set_focus(w, focus);
         if let Some(win) = self.wins.get_mut(&w) {
             win.dirty = Some(Dirty::All);
@@ -1344,6 +1379,17 @@ impl App {
                     p.drag = Some((t, x, y, false));
                 }
             }
+            Some(PanelHit::Agent(i)) => {
+                let name = self.agents.list.get(i).map(|a| a.name.clone());
+                if let Some(p) = self.wins.get_mut(&w).and_then(|x| x.panel.as_mut())
+                    && p.editor.is_none()
+                {
+                    p.agent = name;
+                    p.scroll[1] = 0.0;
+                }
+            }
+            Some(PanelHit::Act(panels::AgentAct::Text)) => self.editor_click(w, x, y),
+            Some(PanelHit::Act(a)) => self.agent_act(w, a),
             Some(PanelHit::Window(_)) | Some(PanelHit::NewWindow) | None => {}
         }
         self.redraw_dirty();
@@ -1351,6 +1397,17 @@ impl App {
 
     fn panel_scroll(&mut self, w: u64, x: f64, dy: f64) {
         let Some(area) = self.panel_area(w) else { return };
+        let ch = self.with_panel_ctx(w, |_, ctx| ctx.mono.cell_h / ctx.scale).unwrap_or(16.0);
+        if let Some(win) = self.wins.get_mut(&w)
+            && let Some(e) = win.panel.as_mut().and_then(|p| p.editor.as_mut())
+            && x > panels::editor_area(panels::body_of(area)).x
+        {
+            let lines = (-dy / ch).round() as isize;
+            e.top = (e.top as isize + lines).clamp(0, e.lines.len().saturating_sub(1) as isize) as usize;
+            win.dirty = Some(Dirty::All);
+            self.redraw_dirty();
+            return;
+        }
         let heights = self.with_panel_ctx(w, panels::content_height).unwrap_or([0.0; 2]);
         if let Some(win) = self.wins.get_mut(&w)
             && let Some(p) = win.panel.as_mut()
@@ -1374,6 +1431,7 @@ impl App {
         match a {
             MenuAction::Perform(action) => self.perform(action),
             MenuAction::NewTabIn(win) => self.new_tab(win),
+            MenuAction::NewTabAs { window, agent } => self.new_tab_as(window, agent),
             MenuAction::Launch { window, folder, command } => self.new_tab_with(window, Some(folder), Some(command)),
             MenuAction::Rename(t) => self.rename_dialog(t),
             MenuAction::Close(t) => self.close_tab(t, false),

@@ -46,6 +46,7 @@ impl App {
                 }
             }
             Action::ReopenTab => self.reopen_last(),
+            Action::ReopenSession => self.reopen_session(),
             Action::History => {
                 if let Some(w) = w {
                     self.toggle_panel(w, Kind::History)
@@ -118,6 +119,11 @@ impl App {
             Action::Overview => {
                 if let Some(w) = w {
                     self.toggle_panel(w, Kind::Overview)
+                }
+            }
+            Action::Agents => {
+                if let Some(w) = w {
+                    self.toggle_panel(w, Kind::Agents)
                 }
             }
             Action::FullScreen => {
@@ -215,7 +221,7 @@ impl App {
         let Some(w) = w else { return };
         let Some(target) = self.focused_tab(w) else { return };
         let folder = self.tab_info(target).map(|t| t.folder.clone());
-        let r = Request::OpenTab { window: Some(WindowRef::Number(w)), folder, name: None, agent: None };
+        let r = Request::OpenTab { window: Some(WindowRef::Number(w)), folder, name: None, agent: None, like: None };
         self.request("ctx open tab", r, move |app, r| match r {
             Response::Ok(Output::Opened(o)) => {
                 if let Some(t) = o.tab {
@@ -407,6 +413,7 @@ impl App {
     /// The + button: a new tab, or one of the things you usually start tabs with.
     pub fn plus_menu(&mut self, w: u64, x: f64, y: f64) {
         self.refresh_starters();
+        self.refresh_agents(false);
         let mut items = vec![MenuItem {
             shortcut: self.shortcut_of(Action::NewTab),
             ..MenuItem::new("New Tab", MenuAction::NewTabIn(w))
@@ -421,6 +428,20 @@ impl App {
                     ..MenuItem::new(
                         &format!("+ {label}"),
                         MenuAction::Launch { window: w, folder: s.folder.clone(), command: s.command.clone() },
+                    )
+                });
+            }
+        }
+        if !self.agents.list.is_empty() {
+            items.push(MenuItem::separator());
+            items.push(MenuItem::heading("New tab as…"));
+            for a in &self.agents.list {
+                let detail = (!a.full_name.is_empty() && a.full_name != a.name).then(|| a.full_name.clone());
+                items.push(MenuItem {
+                    detail,
+                    ..MenuItem::new(
+                        &format!("as {}", a.name),
+                        MenuAction::NewTabAs { window: w, agent: a.name.clone() },
                     )
                 });
             }
@@ -543,7 +564,8 @@ impl App {
     pub fn open_panel(&mut self, w: u64, kind: Kind) {
         let Some(win) = self.wins.get_mut(&w) else { return };
         win.panel = Some(Panel::new(kind));
-        win.focus = if matches!(kind, Kind::FindAll | Kind::History) { Focus::Panel } else { Focus::Term };
+        win.focus =
+            if matches!(kind, Kind::FindAll | Kind::History | Kind::Agents) { Focus::Panel } else { Focus::Term };
         win.menu = None;
         self.dirty_win(w);
         self.ensure_ticker();
@@ -585,6 +607,12 @@ impl App {
             }
             Kind::Overview => self.refresh_processes(),
             Kind::FindAll => {}
+            Kind::Agents => {
+                if let Some(p) = self.wins.get_mut(&w).and_then(|x| x.panel.as_mut()) {
+                    p.agent = self.agents.list.first().map(|a| a.name.clone());
+                }
+                self.refresh_agents(true);
+            }
         }
         self.update_subscriptions();
         self.redraw_dirty();
@@ -703,6 +731,21 @@ impl App {
                 }
             }
             Kind::Activity => {}
+            Kind::Agents => {
+                let name = p.field.text.trim().to_string();
+                if name.is_empty() {
+                    return;
+                }
+                if self.agents.list.iter().any(|a| a.name == name) {
+                    p.agent = Some(name);
+                    p.field.set("");
+                } else {
+                    p.field.set("");
+                    p.agent = Some(name.clone());
+                    self.agent_sentence(vec!["make".into(), "agent".into(), "named".into(), name]);
+                }
+                self.dirty_win(w);
+            }
         }
         self.redraw_dirty();
     }
@@ -826,6 +869,12 @@ impl App {
     pub fn tick(&mut self) {
         self.blink_on = !self.blink_on;
         let mut need = false;
+        if self.loading() {
+            for w in self.wins.values_mut() {
+                w.chrome_dirty = true;
+            }
+            need = true;
+        }
         for w in self.wins.values_mut() {
             if !w.visible || !w.key {
                 continue;
@@ -926,30 +975,33 @@ impl App {
         if self.loaded.reopen_on_launch != "ask" {
             return;
         }
-        self.request("ctx list closed tabs", Request::ListClosedTabs { limit: 100 }, |app, r| {
+        // Agents' tabs only if you kept their window on screen: they go back into it, not yours.
+        let agents = self.state.agent_window_shown;
+        self.request("ctx list closed tabs", Request::ListClosedTabs { limit: 100 }, move |app, r| {
             let Response::Ok(Output::ClosedTabs(c)) = r else { return };
             let open: Vec<u64> = app.list.windows.iter().flat_map(|w| w.tabs.iter().map(|t| t.number)).collect();
-            let tabs: Vec<u64> = c
+            let ended: Vec<&ClosedTab> = c
                 .tabs
                 .iter()
                 .filter(|t| {
                     t.ended == "interrupted" && !open.contains(&t.number) && !app.state.offered.contains(&t.number)
                 })
-                .map(|t| t.number)
                 .collect();
+            let tabs: Vec<u64> = ended.iter().filter(|t| t.opened_by == "you" || agents).map(|t| t.number).collect();
+            app.state.offered.extend(ended.iter().map(|t| t.number));
+            app.save_state();
             if tabs.is_empty() {
                 return;
             }
-            app.state.offered.extend(tabs.iter().copied());
-            app.save_state();
-            if let Some(w) = app.key_window().or_else(|| app.wins.keys().next().copied()) {
-                if let Some(win) = app.wins.get_mut(&w) {
-                    win.reopen_offer = Some(tabs);
+            let n = tabs.len();
+            let text = format!("Reopen {n} {} from last time?", if n == 1 { "tab" } else { "tabs" });
+            app.banner(text, &["Reopen"], false, move |app, b| {
+                if b == Some(0) {
+                    for t in tabs {
+                        app.reopen(t);
+                    }
                 }
-                app.layout(w);
-                app.dirty_win(w);
-                app.redraw_dirty();
-            }
+            });
         });
     }
 
@@ -971,44 +1023,22 @@ impl App {
                         }
                         return;
                     };
-                    if let Some(w) = app.key_window().or_else(|| app.wins.keys().next().copied())
-                        && let Some(win) = app.wins.get_mut(&w)
-                    {
-                        win.history_offer = Some(f.zshrc);
-                        app.layout(w);
-                        app.dirty_win(w);
-                        app.redraw_dirty();
-                    }
+                    app.banner(HISTORY_OFFER, &["Keep History Per Tab"], false, move |app, b| {
+                        app.state.history_checked = true;
+                        app.save_state();
+                        if b == Some(0)
+                            && let Err(e) = crate::zsh_history::keep_per_tab(&f.zshrc)
+                        {
+                            app.alert(&format!("Couldn't change {}", f.zshrc.display()), &e.to_string());
+                        }
+                    });
                 });
             }));
         });
     }
-
-    /// The history bar answered: `keep` adds per-tab history to the `.zshrc`; × only closes it.
-    pub fn history_offer(&mut self, w: u64, keep: bool) {
-        let Some(zshrc) = self.wins.get_mut(&w).and_then(|win| win.history_offer.take()) else { return };
-        self.state.history_checked = true;
-        self.save_state();
-        if keep && let Err(e) = crate::zsh_history::keep_per_tab(&zshrc) {
-            self.alert(&format!("Couldn't change {}", zshrc.display()), &e.to_string());
-        }
-        self.layout(w);
-        self.dirty_win(w);
-        self.redraw_dirty();
-    }
-
-    pub fn reopen_offer(&mut self, w: u64, accept: bool) {
-        let tabs = self.wins.get_mut(&w).and_then(|win| win.reopen_offer.take()).unwrap_or_default();
-        if accept {
-            for t in tabs {
-                self.reopen(t);
-            }
-        }
-        self.layout(w);
-        self.dirty_win(w);
-        self.redraw_dirty();
-    }
 }
+
+const HISTORY_OFFER: &str = "Your tabs share ↑ history as commands run (zsh's share_history), so other tabs' and agents' commands turn up in yours.";
 
 fn outside_about() {
     super::outside(plat::about);

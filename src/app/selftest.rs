@@ -121,6 +121,18 @@ fn tiles(app: &App, w: u64) -> Vec<u64> {
     app.wins.get(&w).map(|w| w.tile_rects.iter().map(|x| x.0).collect()).unwrap_or_default()
 }
 
+/// With `CTX_APP_DUMP`, keep the window's last frame as `<name>.png` (to look at afterwards).
+fn keep_frame(app: &mut App, w: u64, name: &str) {
+    if let Some(dir) = std::env::var_os("CTX_APP_DUMP") {
+        if let Some(win) = app.wins.get_mut(&w) {
+            win.dirty = Some(super::Dirty::All);
+        }
+        app.redraw_dirty();
+        let dir = std::path::Path::new(&dir);
+        let _ = std::fs::copy(dir.join(format!("window-{w}.png")), dir.join(format!("{name}.png")));
+    }
+}
+
 fn tab_count(app: &App, w: u64) -> usize {
     app.window_info(w).map(|i| i.tabs.len()).unwrap_or(0)
 }
@@ -132,6 +144,10 @@ pub fn start() {
         r.window = app.wins.keys().next().copied().unwrap_or(0);
         r.tab = app.focused_tab(r.window).unwrap_or(0);
         r.check(r.window != 0 && r.tab != 0, "a window with a tab is shown");
+        r.check(
+            app.wins.len() == 1 && !app.wins.contains_key(&super::PLACEHOLDER),
+            "the window shown at launch became that window (not a second one)",
+        );
         if let Some(win) = app.wins.get(&r.window) {
             plat::show_window(&win.views, true);
         }
@@ -526,6 +542,121 @@ pub fn start() {
         if let Some(t) = app.focused_tab(r.window) {
             app.input(t, ctx_protocol::AppInput::Key { key: "ctrl-c".into(), text: None });
         }
+    }));
+    // Banners: one at a time under the bar, never a dialog; answering shows the next.
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        let top = |app: &App| app.wins.get(&w).map(|x| x.term_rect.y).unwrap_or(0.0);
+        let bare = top(app);
+        let answer = std::rc::Rc::new(std::cell::Cell::new(None));
+        let heard = answer.clone();
+        app.alert("There's a problem in the config file", "line 3: no such setting");
+        app.ask("Close this tab?", "It's running sleep.", "Close", "Cancel", move |_, yes| heard.set(Some(yes)));
+        r.check(app.wins.get(&w).is_some_and(|x| x.dialog.is_none()), "alerts and questions are banners, not dialogs");
+        r.check(
+            app.banners.len() == 2 && (top(app) - bare - chrome::STRIP_H).abs() < 0.5,
+            "two banners take one strip: they show one at a time",
+        );
+        app.answer_banner(None);
+        r.check(
+            app.banners.front().is_some_and(|b| b.text.starts_with("Close this tab")),
+            "closing one shows the next",
+        );
+        // Its first button, clicked where it's drawn.
+        let (cw, y) = app
+            .wins
+            .get(&w)
+            .map(|x| (x.bar.buttons.last().map(|b| b.1.x + b.1.w + 6.0).unwrap_or(800.0), x.bar.height))
+            .unwrap_or((800.0, 40.0));
+        let l = super::banner::layout(cw, y, &["Close".into(), "Cancel".into()]);
+        click_at(app, w, l.buttons[0].x + 4.0, l.buttons[0].y + 4.0, 1, 1);
+        r.check(answer.get() == Some(true) && app.banners.is_empty(), "clicking its button answers it");
+        r.check((top(app) - bare).abs() < 0.5, "and with none left, the strip goes");
+    }));
+    // Agents: the panel lists agents and edits an agent's instructions. (The throwaway server has
+    // no agents' accounts, so the test gives the panel one whose home is a folder of ours.)
+    steps.push_back(Box::new(|app, r| {
+        app.perform(Action::Agents);
+        let open = app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).is_some_and(|p| p.kind == Kind::Agents);
+        r.check(open, "Shell ▸ Agents opens the Agents panel");
+    }));
+    steps.push_back(Box::new(|app, r| {
+        let home = std::env::temp_dir().join(format!("ctx-selftest-agent-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&home);
+        let _ = std::fs::write(home.join("CLAUDE.md"), "# Selftest\n- one");
+        app.agents.list = vec![super::agents::Agent {
+            name: "selftest".into(),
+            full_name: "Self test".into(),
+            home: home.display().to_string(),
+            colour: Some("teal".into()),
+            home_access: vec![("you".into(), "read and write".into()), ("foreman".into(), "read and write".into())],
+            grants: vec![("/tmp/shared".into(), false, true)],
+            limits: Some((8192, 200, true)),
+            spaces: vec!["job-search".into()],
+            ..Default::default()
+        }];
+        app.agents.at = Some(std::time::Instant::now());
+        let hit = app.panel_hit_center(r.window, super::panels::PanelHit::Agent(0));
+        match hit {
+            Some((x, y)) => click_at(app, r.window, x, y, 1, 1),
+            None => r.check(false, "the agent is listed"),
+        }
+        let chosen = app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).and_then(|p| p.agent.clone());
+        r.check(chosen.as_deref() == Some("selftest"), "clicking an agent shows it");
+    }));
+    steps.push_back(Box::new(|app, r| {
+        keep_frame(app, r.window, "agents");
+        // Scroll the details to the end: the last buttons come into view.
+        let remove = super::panels::PanelHit::Act(super::panels::AgentAct::Remove);
+        let Some((x, y)) =
+            app.panel_hit_center(r.window, super::panels::PanelHit::Act(super::panels::AgentAct::OpenTab))
+        else {
+            return r.check(false, "the details are shown");
+        };
+        app.scroll_event(r.window, x, y, 0.0, -2000.0, true, 0);
+        let area = app.panel_area(r.window).unwrap_or(crate::layout::Rect::new(0.0, 0.0, 0.0, 0.0));
+        let shown = app.panel_hit_center(r.window, remove).is_some_and(|(_, ry)| ry < area.y + area.h);
+        r.check(shown, "an agent's details scroll to their last buttons");
+        keep_frame(app, r.window, "agents-end");
+        app.scroll_event(r.window, x, y, 0.0, 2000.0, true, 0);
+        let edit = super::panels::PanelHit::Act(super::panels::AgentAct::Edit(0));
+        if let Some((x, y)) = app.panel_hit_center(r.window, edit) {
+            click_at(app, r.window, x, y, 1, 1);
+        }
+        let text =
+            app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).and_then(|p| p.editor.as_ref()).map(|e| e.text());
+        r.check(text.as_deref() == Some("# Selftest\n- one"), "Edit CLAUDE.md opens it in the editor");
+        // To the end, a new list item, typed.
+        key(app, r.window, 125, 0); // down
+        key(app, r.window, 119, 0); // end
+        enter(app, r.window);
+        type_text(app, r.window, "two");
+    }));
+    steps.push_back(Box::new(|app, r| {
+        keep_frame(app, r.window, "agents-editor");
+        let e = app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).and_then(|p| p.editor.as_ref());
+        let (text, path) = e.map(|e| (e.text(), e.path.clone())).unwrap_or_default();
+        r.check(
+            text == "# Selftest\n- one\n- two",
+            &format!("typing edits the instructions (and keeps the list going): {text:?}"),
+        );
+        let save = super::panels::PanelHit::Act(super::panels::AgentAct::Save);
+        if let Some((x, y)) = app.panel_hit_center(r.window, save) {
+            click_at(app, r.window, x, y, 1, 1);
+        }
+        r.check(
+            std::fs::read_to_string(&path).ok().as_deref() == Some("# Selftest\n- one\n- two"),
+            "Save writes the file",
+        );
+    }));
+    steps.push_back(Box::new(|app, r| {
+        key(app, r.window, 53, 0); // escape: leave the editor
+        let editing = app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).is_some_and(|p| p.editor.is_some());
+        r.check(!editing, "Escape closes a saved editor");
+        if let Some(p) = app.agents.list.first() {
+            let _ = std::fs::remove_dir_all(&p.home);
+        }
+        app.close_panel(r.window);
     }));
     run(steps, Report::default());
 }

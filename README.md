@@ -1,12 +1,17 @@
 # CTX.app
 
-The native macOS window for [ctx](../ctx) (it also builds on Linux, for development and testing). It holds no shells and no scrollback of its own: it
+The native macOS window for [ctx](https://github.com/Dissipation-AI/ctx) (it also builds on Linux, for development and testing). It holds no shells and no scrollback of its own: it
 shows what the `ctx` server has and sends it your keys. Anything you do here, an agent can do with
 the `ctx` command, and the app shows it at once. See [SPEC.md](SPEC.md).
 
 ## Build and run
 
-Needs the ctx checkout next to this one (`../ctx`, which needs Zig; see its README) and Rust 1.99.
+Needs a checkout of [ctx](https://github.com/Dissipation-AI/ctx) next to this one (`../ctx`; it
+needs Zig, see its README) and Rust 1.99:
+
+```sh
+git clone https://github.com/Dissipation-AI/ctx.git ../ctx
+```
 
 ```sh
 cargo build --release          # target/release/CTX (run it directly while developing)
@@ -28,6 +33,27 @@ scripts/install-mac.sh --help   # --debug, --keep-tcc, --keep-server, --uninstal
 
 Set `CTX_HOME=/some/folder` to try it against a separate server (`ctx server` with the same
 `CTX_HOME`) without touching your tabs, launchd or PATH.
+
+### Coding agents
+
+ctx can be a coding agent's shell, so you watch the agent's commands in CTX as it runs them. In a
+CTX tab:
+
+```sh
+ctx install hooks for claude        # or antigravity, codex, cursor, pi, opencode
+```
+
+For Claude Code and Antigravity this also installs ctx's skills, `using-ctx` and
+`interactive-programs`, which teach the agent to read and restart programs in other tabs and to
+drive consoles, setup wizards, REPLs, debuggers and ssh through a tab; the agent loads them only
+when a task needs them. To add only the skills to Claude Code:
+
+```sh
+claude plugin install ctx-skills --marketplace Dissipation-AI/ctx
+```
+
+See [Using it with coding agents](https://github.com/Dissipation-AI/ctx#using-it-with-coding-agents)
+in ctx's README.
 
 ### A shortcut from anywhere (macOS)
 

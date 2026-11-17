@@ -11,7 +11,7 @@ use super::ui::{self, Colors};
 use super::{App, BADGE_SECONDS, Dirty, Focus, Spare, TabSource, later, plat};
 use crate::layout::Rect;
 use crate::model::{self, Composed, Place, ViewPos};
-use crate::render::{self, Canvas, CursorFrame, Damage, TileFrame};
+use crate::render::{self, Canvas, CursorFrame, Damage, Rgb, TileFrame};
 use crate::text::Row;
 use ctx_protocol::*;
 use std::collections::HashMap;
@@ -156,6 +156,7 @@ impl App {
                         .then(|| super::agent_name(&t.opened_by))
                         .or_else(|| super::running_program(t).filter(|p| super::AGENTS.contains(&p.as_str()))),
                     launcher: t.permissions_of.clone(),
+                    account: t.owner.as_ref().map(|o| (o.clone(), self.agent_colour(o))),
                     badge,
                     selected: focused == Some(t.number) || (!has_tiles && selected == Some(t.number)),
                     tiled: tiled.contains(&t.number),
@@ -201,6 +202,8 @@ impl App {
             focused_field: win.focus == Focus::Panel && win.key,
             agent_window,
             processes: &self.processes,
+            agents: &self.agents.list,
+            agent_colour: &|n: &str| self.agent_colour(n),
         };
         Some(f(p, &ctx))
     }
@@ -411,6 +414,9 @@ impl App {
         let activity = self.activity.clone();
         let agent_window = self.agent_window();
         let processes = self.processes.clone();
+        let agent_list = self.agents.list.clone();
+        let agent_colours: HashMap<String, Rgb> =
+            agent_list.iter().map(|a| (a.name.clone(), self.agent_colour(&a.name))).collect();
         let bgs: HashMap<u64, render::Rgb> = list
             .windows
             .iter()
@@ -421,12 +427,17 @@ impl App {
             .collect();
         let default_bg = self.theme(None).background;
         let always_close = self.loaded.app.always_show_tab_close;
+        let banner = self.banners.front().map(|b| super::banner::Banner {
+            text: b.text.clone(),
+            buttons: b.buttons.clone(),
+            then: None,
+            warning: b.warning,
+        });
+        let loading = self.loading();
         let win = self.wins.get_mut(&w).unwrap();
         let find = win.find.clone();
         let find_focused = win.focus == Focus::Find && key;
-        let reopen = win.reopen_offer.as_ref().map(|t| t.len());
         let paste = win.paste_offer.as_ref().map(|(_, t)| t.clone());
-        let history = win.history_offer.is_some();
         let hover_hit = win.hover;
         let drag = win.tab_press.filter(|p| p.dragging).map(|p| (p.index, p.x));
         let full = matches!(dirty, Some(Dirty::All));
@@ -446,18 +457,13 @@ impl App {
                     active: key,
                     width: cw,
                     always_close,
+                    loading,
                 };
                 chrome::draw_bar(c, &frame, &fonts, &col, scale);
                 let mut strip_y = frame.layout.height;
-                if let Some(n) = reopen {
-                    let l = chrome::reopen_layout(cw, strip_y);
-                    let text = format!("Reopen {n} {} from last time?", if n == 1 { "tab" } else { "tabs" });
-                    chrome::draw_reopen(c, &l, &text, hover_hit, &fonts, &col, scale);
-                    strip_y += chrome::STRIP_H;
-                }
-                if history {
-                    let l = chrome::history_layout(cw, strip_y);
-                    chrome::draw_history(c, &l, hover_hit, &fonts, &col, scale);
+                if let Some(b) = &banner {
+                    let l = super::banner::layout(cw, strip_y, &b.buttons);
+                    super::banner::draw(c, &l, b, hover_hit, &fonts, &col, scale);
                     strip_y += chrome::STRIP_H;
                 }
                 if let Some(t) = &paste {
@@ -499,6 +505,8 @@ impl App {
                     focused_field: win.focus == Focus::Panel && key,
                     agent_window,
                     processes: &processes,
+                    agents: &agent_list,
+                    agent_colour: &|n: &str| agent_colours.get(n).copied().unwrap_or([128, 128, 128]),
                 };
                 panels::draw(c, p, items, &ctx, caret_on);
             }
@@ -598,8 +606,6 @@ impl App {
                     "menu": w.menu.as_ref().map(|m| m.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()),
                     "dialog": w.dialog.as_ref().map(|d| d.title.clone()),
                     "find": w.find.as_ref().map(|f| json!({"text": f.field.text, "status": f.status})),
-                    "reopen_offer": w.reopen_offer,
-                    "history_offer": w.history_offer,
                 })
             })
             .collect();
@@ -635,14 +641,8 @@ impl App {
             return win.bar.hit(x, y);
         }
         let mut strip_y = win.bar.height;
-        if win.reopen_offer.is_some() {
-            if let Some(h) = chrome::reopen_layout(cw, strip_y).hit(x, y) {
-                return h;
-            }
-            strip_y += chrome::STRIP_H;
-        }
-        if win.history_offer.is_some() {
-            if let Some(h) = chrome::history_layout(cw, strip_y).hit(x, y) {
+        if let Some(b) = self.banners.front() {
+            if let Some(h) = super::banner::layout(cw, strip_y, &b.buttons).hit(x, y) {
                 return h;
             }
             strip_y += chrome::STRIP_H;
