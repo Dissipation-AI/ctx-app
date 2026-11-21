@@ -658,33 +658,28 @@ fn draw_icon<C: Canvas>(c: &mut C, b: Button, r: Rect, col: Rgb, s: f64) {
     let lw = 1.4 * s;
     match b {
         Button::Switch => {
-            // A person (a head and shoulders) with a swap arrow at the lower right.
-            let head = 3.0 * s;
-            let (hx, hy) = (cx - 2.5 * s, cy - 3.5 * s);
-            let mut ring = Vec::new();
-            for i in 0..=20 {
-                let a = i as f64 / 20.0 * std::f64::consts::TAU;
-                let p = (hx + head * a.cos(), hy + head * a.sin());
-                ring.push(if i == 0 { PathOp::Move(p.0, p.1) } else { PathOp::Line(p.0, p.1) });
-            }
-            c.stroke(&ring, lw, col, 1.0);
-            let mut shoulders = Vec::new();
-            for i in 0..=16 {
-                let a = std::f64::consts::PI + i as f64 / 16.0 * std::f64::consts::PI;
-                let p = (hx + 6.0 * s * a.cos(), cy + 7.0 * s + 5.5 * s * a.sin());
-                shoulders.push(if i == 0 { PathOp::Move(p.0, p.1) } else { PathOp::Line(p.0, p.1) });
-            }
-            c.stroke(&shoulders, lw, col, 1.0);
-            let (ax, ay) = (cx + 5.5 * s, cy + 1.0 * s);
+            // A person (filled head and shoulders) at the left, and apart from it at the right,
+            // two arrows swapping places.
+            let d = 5.0 * s;
+            let px = cx - 4.5 * s;
+            c.fill_rounded(col, 1.0, px - d / 2.0, cy - 6.5 * s, d, d, [d / 2.0; 4]);
+            let (bw, bh) = (9.0 * s, 5.5 * s);
+            c.fill_rounded(col, 1.0, px - bw / 2.0, cy + 1.0 * s, bw, bh, [bw / 2.0, bw / 2.0, 1.0 * s, 1.0 * s]);
+            let (x0, x1, h) = (cx + 2.5 * s, cx + 9.0 * s, 2.0 * s);
+            let (up, down) = (cy - 2.5 * s, cy + 2.5 * s);
             let arrows = [
-                PathOp::Move(ax - 2.5 * s, ay - 2.0 * s),
-                PathOp::Line(ax + 3.0 * s, ay - 2.0 * s),
-                PathOp::Line(ax + 1.0 * s, ay - 4.0 * s),
-                PathOp::Move(ax + 3.0 * s, ay + 3.0 * s),
-                PathOp::Line(ax - 2.5 * s, ay + 3.0 * s),
-                PathOp::Line(ax - 0.5 * s, ay + 5.0 * s),
+                PathOp::Move(x0, up),
+                PathOp::Line(x1, up),
+                PathOp::Move(x1 - h, up - h),
+                PathOp::Line(x1, up),
+                PathOp::Line(x1 - h, up + h),
+                PathOp::Move(x1, down),
+                PathOp::Line(x0, down),
+                PathOp::Move(x0 + h, down - h),
+                PathOp::Line(x0, down),
+                PathOp::Line(x0 + h, down + h),
             ];
-            c.stroke(&arrows, lw * 0.85, col, 1.0);
+            c.stroke(&arrows, lw * 0.9, col, 1.0);
         }
         Button::Overview => {
             // A small tree, left to right: one node, branching to three.

@@ -433,6 +433,17 @@ pub struct Menu {
     pub y: f64,
     pub items: Vec<MenuItem>,
     pub hover: Option<usize>,
+    /// What it shows, for menus built from lists that load later (agents, starters): they're
+    /// built again when the lists arrive.
+    pub source: Option<MenuSource>,
+}
+
+/// A menu that's built from loaded lists, with where it was opened.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MenuSource {
+    Plus { x: f64 },
+    Switch { tab: u64, x: f64, y: f64 },
+    Tab { tab: u64, x: f64, y: f64 },
 }
 
 pub const MENU_ROW: f64 = 26.0;
@@ -441,7 +452,7 @@ pub const MENU_PAD: f64 = 6.0;
 
 impl Menu {
     pub fn new(x: f64, y: f64, items: Vec<MenuItem>) -> Menu {
-        Menu { x, y, items, hover: None }
+        Menu { x, y, items, hover: None, source: None }
     }
 
     /// Each item's rectangle (points) and the menu's, kept inside a `w`×`h` window.
