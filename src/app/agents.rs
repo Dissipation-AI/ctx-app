@@ -28,6 +28,8 @@ pub struct Agents {
     pub list: Vec<Agent>,
     pub at: Option<Instant>,
     pub loading: bool,
+    /// Why the last listing failed.
+    pub error: Option<String>,
 }
 
 /// Parse `ctx list agents as json`.
@@ -156,9 +158,10 @@ impl App {
             return;
         }
         self.agents.loading = true;
-        run_ctx(vec!["list".into(), "agents".into(), "as".into(), "json".into()], |app, ok, out, _| {
+        run_ctx(vec!["list".into(), "agents".into(), "as".into(), "json".into()], |app, ok, out, err| {
             app.agents.loading = false;
             app.agents.at = Some(Instant::now());
+            app.agents.error = (!ok).then(|| err.trim().to_string());
             if ok {
                 let list = parse(&out);
                 if list != app.agents.list {
@@ -169,6 +172,7 @@ impl App {
                     app.redraw_dirty();
                 }
             }
+            app.refresh_open_menus();
         });
     }
 

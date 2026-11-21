@@ -2,7 +2,7 @@
 
 use super::chrome::{self, Status};
 use super::panels::{self, Kind, Panel};
-use super::ui::{self, Menu, MenuAction, MenuItem};
+use super::ui::{self, Menu, MenuAction, MenuItem, MenuSource};
 use super::{App, Dirty, Focus, Starter, plat};
 use crate::layout::{Edge, Node};
 use crate::model::{History, ViewPos};
@@ -490,7 +490,9 @@ impl App {
             ..MenuItem::new("Reopen Closed Tab", MenuAction::Perform(Action::ReopenTab))
         });
         let _ = y;
-        self.open_menu(w, Menu::new(x - 10.0, chrome::bar_height(self.loaded.app.one_line_tabs) - 2.0, items));
+        let mut m = Menu::new(x - 10.0, chrome::bar_height(self.loaded.app.one_line_tabs) - 2.0, items);
+        m.source = Some(MenuSource::Plus { x });
+        self.open_menu(w, m);
     }
 
     /// Ask the server for starters (the menu shows what it has until the answer comes).
@@ -506,20 +508,9 @@ impl App {
                     .into_iter()
                     .map(|s| Starter { folder: s.folder, command: s.command, count: s.count as usize })
                     .collect();
-                // Refresh an open + menu.
-                let ws: Vec<u64> = app
-                    .wins
-                    .iter()
-                    .filter(|(_, w)| {
-                        w.menu.as_ref().is_some_and(|m| m.items.first().is_some_and(|i| i.label == "New Tab"))
-                    })
-                    .map(|(n, _)| *n)
-                    .collect();
-                for w in ws {
-                    let x = app.wins[&w].menu.as_ref().map(|m| m.x + 10.0).unwrap_or(0.0);
-                    app.starters_at = Some(Instant::now());
-                    app.plus_menu(w, x, 0.0);
-                }
+                // Fresh now (a slow answer must not ask again when the menu is rebuilt).
+                app.starters_at = Some(Instant::now());
+                app.refresh_open_menus();
             }
         });
     }
@@ -533,11 +524,12 @@ impl App {
             self.list.windows.iter().flat_map(|w| &w.tabs).find(|t| t.number == tab).and_then(|t| t.owner.clone());
         let mut items = vec![MenuItem::heading("Switch this tab to…")];
         if self.agents.list.is_empty() {
-            items.push(MenuItem::heading(if self.agents.loading {
-                "Loading agents…"
-            } else {
-                "No agents yet: ctx make agent named …"
-            }));
+            let why = match &self.agents.error {
+                _ if self.agents.loading => "Loading agents…".to_string(),
+                Some(e) => format!("Couldn't list agents: {}", e.lines().next().unwrap_or("ctx failed")),
+                None => "No agents yet: ctx make agent named …".to_string(),
+            };
+            items.push(MenuItem::heading(&why));
         }
         for a in &self.agents.list {
             let detail = (!a.full_name.is_empty() && a.full_name != a.name).then(|| a.full_name.clone());
@@ -553,7 +545,22 @@ impl App {
     /// The bar's switch button: the focused tab becomes an agent's.
     pub fn switch_menu(&mut self, w: u64, tab: u64, x: f64, y: f64) {
         let items = self.switch_items(tab);
-        self.open_menu(w, Menu::new(x - 10.0, y, items));
+        let mut m = Menu::new(x - 10.0, y, items);
+        m.source = Some(MenuSource::Switch { tab, x, y });
+        self.open_menu(w, m);
+    }
+
+    /// Build open menus again from what's loaded now (agents or starters arrived).
+    pub fn refresh_open_menus(&mut self) {
+        let open: Vec<(u64, MenuSource)> =
+            self.wins.iter().filter_map(|(n, w)| w.menu.as_ref().and_then(|m| m.source).map(|s| (*n, s))).collect();
+        for (w, source) in open {
+            match source {
+                MenuSource::Plus { x } => self.plus_menu(w, x, 0.0),
+                MenuSource::Switch { tab, x, y } => self.switch_menu(w, tab, x, y),
+                MenuSource::Tab { tab, x, y } => self.tab_menu(w, tab, x, y),
+            }
+        }
     }
 
     pub fn tab_menu(&mut self, w: u64, tab: u64, x: f64, y: f64) {
@@ -585,7 +592,9 @@ impl App {
             shortcut: self.shortcut_of(Action::CloseTab),
             ..MenuItem::new("Close Tab", MenuAction::Close(tab))
         });
-        self.open_menu(w, Menu::new(x, y, items));
+        let mut m = Menu::new(x, y, items);
+        m.source = Some(MenuSource::Tab { tab, x, y });
+        self.open_menu(w, m);
     }
 
     /// Right-click in the terminal.

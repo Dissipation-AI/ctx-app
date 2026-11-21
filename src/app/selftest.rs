@@ -761,6 +761,38 @@ pub fn start() {
             x.menu = None;
         }
     }));
+    // Opened before the agents have loaded: it fills in when they arrive, without reopening.
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        app.agents = Default::default();
+        let button =
+            app.wins.get(&w).and_then(|x| x.bar.buttons.iter().find(|b| b.0 == chrome::Button::Switch)).map(|b| b.1);
+        let Some(b) = button else { return r.check(false, "the bar has a switch button") };
+        click_at(app, w, b.x + b.w / 2.0, b.y + b.h / 2.0, 1, 1);
+        let loading = app
+            .wins
+            .get(&w)
+            .and_then(|x| x.menu.as_ref())
+            .is_some_and(|m| m.items.iter().any(|i| i.label == "Loading agents…"));
+        r.check(loading, "the switch menu says it's loading agents while they load");
+    }));
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        let labels: Vec<String> = app
+            .wins
+            .get(&w)
+            .and_then(|x| x.menu.as_ref())
+            .map(|m| m.items.iter().map(|i| i.label.clone()).collect())
+            .unwrap_or_default();
+        let filled = !labels.is_empty()
+            && !labels.iter().any(|l| l == "Loading agents…")
+            && labels.len() == 1 + app.agents.list.len().max(1);
+        r.check(filled, &format!("the open switch menu fills in when the agents arrive: {labels:?}"));
+        keep_frame(app, w, "switch-menu");
+        if let Some(x) = app.wins.get_mut(&w) {
+            x.menu = None;
+        }
+    }));
     // A panel isn't the tab it opened over: that tab's click goes back to it.
     steps.push_back(Box::new(|app, r| {
         let w = r.window;
