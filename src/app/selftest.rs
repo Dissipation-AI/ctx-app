@@ -27,6 +27,8 @@ pub struct Report {
     pub cursor: Option<(u16, u16)>,
     /// Another app had Secure Keyboard Entry on before the test (so "off" can't be checked).
     pub secure_elsewhere: bool,
+    /// With `CTX_APP_SELFTEST_AGENT`: the tab switched to that agent, and its place in its window.
+    pub switched: Option<(u64, usize)>,
 }
 
 impl Report {
@@ -856,6 +858,51 @@ pub fn start() {
         let after = bar(app).unwrap();
         r.check(fits(&after, first) && !fits(&after, last), "with the last tab selected, the bar scrolls to the first");
     }));
+    // With CTX_APP_SELFTEST_AGENT=<one of your agents>: choosing it from the switch menu really
+    // switches the tab (an agent's tab opens in its place and the idle tab closes). Opt-in, as
+    // it needs a real agent account and ctx's helper.
+    if let Some(agent) = std::env::var("CTX_APP_SELFTEST_AGENT").ok().filter(|a| !a.is_empty()) {
+        steps.push_back(Box::new(|app, r| {
+            let w = r.window;
+            app.refresh_agents(true);
+            let Some(t) = app.focused_tab(w) else { return r.check(false, "a tab is focused") };
+            let at = app.list.windows.iter().find_map(|x| x.tabs.iter().position(|x| x.number == t));
+            r.switched = at.map(|i| (t, i));
+            let button = app
+                .wins
+                .get(&w)
+                .and_then(|x| x.bar.buttons.iter().find(|b| b.0 == chrome::Button::Switch))
+                .map(|b| b.1);
+            if let Some(b) = button {
+                click_at(app, w, b.x + b.w / 2.0, b.y + b.h / 2.0, 1, 1);
+            }
+        }));
+        steps.push_back(Box::new(move |app, r| {
+            let w = r.window;
+            let item = app.wins.get(&w).and_then(|x| x.menu.as_ref()).and_then(|m| {
+                m.items.iter().find_map(|i| match &i.action {
+                    Some(a @ MenuAction::SwitchTab { agent: name, .. }) if *name == agent => Some(a.clone()),
+                    _ => None,
+                })
+            });
+            let Some(action) = item else { return r.check(false, "the switch menu offers CTX_APP_SELFTEST_AGENT") };
+            if let Some(x) = app.wins.get_mut(&w) {
+                x.menu = None;
+            }
+            app.menu_chose(w, action);
+        }));
+        steps.push_back(Box::new(|_, _| {}));
+        steps.push_back(Box::new(|_, _| {}));
+        steps.push_back(Box::new(|app, r| {
+            let Some((t, i)) = r.switched else { return r.check(false, "a tab was switched") };
+            let name = std::env::var("CTX_APP_SELFTEST_AGENT").unwrap_or_default();
+            let win =
+                app.list.windows.iter().find(|x| x.tabs.iter().any(|x| x.owner.as_deref() == Some(name.as_str())));
+            let placed = win.and_then(|x| x.tabs.get(i)).is_some_and(|x| x.owner.as_deref() == Some(name.as_str()));
+            let gone = !app.list.windows.iter().any(|x| x.tabs.iter().any(|x| x.number == t));
+            r.check(placed && gone, &format!("choosing {name} switches the tab in place, and the idle tab closes"));
+        }));
+    }
     run(steps, Report::default());
 }
 

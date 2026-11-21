@@ -10,7 +10,12 @@ export CTX_HOME
 mkdir -p "$CTX_HOME/home"
 printf 'shell = "/bin/zsh"\n' > "$CTX_HOME/config.toml"
 pids=()
-cleanup() { kill "${pids[@]}" 2>/dev/null; rm -rf "$CTX_HOME"; }
+# The server's shells may still write (history) as they exit: wait for it, then retry.
+cleanup() {
+    kill "${pids[@]}" 2>/dev/null
+    wait "${pids[@]}" 2>/dev/null
+    for _ in 1 2 3 4 5; do rm -rf "$CTX_HOME" 2>/dev/null && break; sleep 0.3; done
+}
 trap cleanup EXIT
 if [ "$(uname)" != Darwin ] && [ -z "${DISPLAY:-}" ]; then
     export DISPLAY=:$((90 + RANDOM % 9))
