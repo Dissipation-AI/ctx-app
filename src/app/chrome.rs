@@ -81,12 +81,15 @@ pub enum Status {
 /// The chrome's buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
+    /// Switch this tab to an agent.
+    Switch,
     Overview,
     History,
     Activity,
 }
 
-pub const BUTTONS: [(Button, &str); 3] = [
+pub const BUTTONS: [(Button, &str); 4] = [
+    (Button::Switch, "Switch this tab to an agent"),
     (Button::Overview, "Overview (all windows and tabs)"),
     (Button::History, "History of closed tabs (⌘Y)"),
     (Button::Activity, "Activity of other programs (⇧⌘A)"),
@@ -654,6 +657,35 @@ fn draw_icon<C: Canvas>(c: &mut C, b: Button, r: Rect, col: Rgb, s: f64) {
     let (cx, cy) = ((r.x + r.w / 2.0).round(), (r.y + r.h / 2.0).round());
     let lw = 1.4 * s;
     match b {
+        Button::Switch => {
+            // A person (a head and shoulders) with a swap arrow at the lower right.
+            let head = 3.0 * s;
+            let (hx, hy) = (cx - 2.5 * s, cy - 3.5 * s);
+            let mut ring = Vec::new();
+            for i in 0..=20 {
+                let a = i as f64 / 20.0 * std::f64::consts::TAU;
+                let p = (hx + head * a.cos(), hy + head * a.sin());
+                ring.push(if i == 0 { PathOp::Move(p.0, p.1) } else { PathOp::Line(p.0, p.1) });
+            }
+            c.stroke(&ring, lw, col, 1.0);
+            let mut shoulders = Vec::new();
+            for i in 0..=16 {
+                let a = std::f64::consts::PI + i as f64 / 16.0 * std::f64::consts::PI;
+                let p = (hx + 6.0 * s * a.cos(), cy + 7.0 * s + 5.5 * s * a.sin());
+                shoulders.push(if i == 0 { PathOp::Move(p.0, p.1) } else { PathOp::Line(p.0, p.1) });
+            }
+            c.stroke(&shoulders, lw, col, 1.0);
+            let (ax, ay) = (cx + 5.5 * s, cy + 1.0 * s);
+            let arrows = [
+                PathOp::Move(ax - 2.5 * s, ay - 2.0 * s),
+                PathOp::Line(ax + 3.0 * s, ay - 2.0 * s),
+                PathOp::Line(ax + 1.0 * s, ay - 4.0 * s),
+                PathOp::Move(ax + 3.0 * s, ay + 3.0 * s),
+                PathOp::Line(ax - 2.5 * s, ay + 3.0 * s),
+                PathOp::Line(ax - 0.5 * s, ay + 5.0 * s),
+            ];
+            c.stroke(&arrows, lw * 0.85, col, 1.0);
+        }
         Button::Overview => {
             // A small tree, left to right: one node, branching to three.
             let n = 3.5 * s;
@@ -895,7 +927,9 @@ mod tests {
         assert_eq!(l.hit(l.tabs[1].1.x + 60.0, 20.0), Hit::Tab { tab: 2, index: 1, close: false });
         assert_eq!(l.hit(l.tabs[1].1.x + 5.0, 20.0), Hit::Tab { tab: 2, index: 1, close: true });
         assert_eq!(l.hit(l.plus.x + 5.0, 20.0), Hit::Plus);
-        assert!(matches!(l.hit(l.buttons[1].1.x + 5.0, 20.0), Hit::Button(Button::History)));
+        for (b, r) in &l.buttons {
+            assert_eq!(l.hit(r.x + 5.0, 20.0), Hit::Button(*b));
+        }
         assert_eq!(l.insertion(l.tabs[1].1.x + 10.0), 1);
         assert_eq!(l.insertion(10_000.0), 3);
         // Thirty tabs don't fit: chevrons, and scrolling brings the last into view.

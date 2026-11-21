@@ -6,6 +6,7 @@
 
 use super::chrome::{self, Hit};
 use super::panels::Kind;
+use super::ui::MenuAction;
 use super::{App, later, plat};
 use crate::keys::{self, Press};
 use crate::model::{Place, ViewPos};
@@ -740,6 +741,25 @@ pub fn start() {
             let _ = std::fs::remove_dir_all(&p.home);
         }
         app.close_panel(r.window);
+    }));
+    // The bar's switch button: a menu of agents that switches the tab you're in.
+    steps.push_back(Box::new(|app, r| {
+        let w = r.window;
+        app.agents.list = vec![super::agents::Agent { name: "selftest".into(), ..Default::default() }];
+        app.agents.at = Some(std::time::Instant::now());
+        let button =
+            app.wins.get(&w).and_then(|x| x.bar.buttons.iter().find(|b| b.0 == chrome::Button::Switch)).map(|b| b.1);
+        let Some(b) = button else { return r.check(false, "the bar has a switch button") };
+        click_at(app, w, b.x + b.w / 2.0, b.y + b.h / 2.0, 1, 1);
+        let menu = app.wins.get(&w).and_then(|x| x.menu.as_ref());
+        let tab = app.focused_tab(w).unwrap_or(0);
+        let switches = menu.is_some_and(|m| {
+            m.items.iter().any(|i| i.action == Some(MenuAction::SwitchTab { tab, agent: "selftest".into() }))
+        });
+        r.check(switches, "the switch button lists agents that switch the tab you're in");
+        if let Some(x) = app.wins.get_mut(&w) {
+            x.menu = None;
+        }
     }));
     // A panel isn't the tab it opened over: that tab's click goes back to it.
     steps.push_back(Box::new(|app, r| {

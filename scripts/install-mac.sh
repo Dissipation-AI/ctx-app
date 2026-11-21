@@ -148,10 +148,10 @@ open "$dest/CTX.app"
 echo "Installed $dest/CTX.app. It registers the ctx server and offers the command-line tools on first run."
 
 # 7. Claude Code keeps a copy of ctx's plugin per version, so a changed plugin only reaches new
-#    sessions after a reinstall.
+#    sessions after a reinstall (which `ctx install hooks` does).
 if grep -q '"ctx@ctx"' "$HOME/.claude/plugins/installed_plugins.json" 2> /dev/null; then
     step "Reinstalling ctx's Claude Code plugin"
     ctx_bin=$dest/CTX.app/Contents/Resources/bin/ctx
     for _ in $(seq 100); do "$ctx_bin" status > /dev/null 2>&1 && break; sleep 0.1; done
-    "$ctx_bin" remove hooks for claude && "$ctx_bin" install hooks for claude
+    "$ctx_bin" install hooks for claude < /dev/null
 fi
