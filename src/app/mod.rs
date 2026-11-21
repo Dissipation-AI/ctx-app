@@ -1357,6 +1357,42 @@ impl App {
         });
     }
 
+    /// `ctx switch tab N to agent "a"`, as the CLI does it: the agent's tab opens in tab N's
+    /// place (same window, right after it) and is shown; tab N closes if it's idle.
+    pub fn switch_tab(&mut self, tab: u64, agent: String) {
+        let Some((w, at, idle)) = self.list.windows.iter().find_map(|w| {
+            w.tabs.iter().position(|t| t.number == tab).map(|i| (w.number, i, w.tabs[i].state == "idle"))
+        }) else {
+            return;
+        };
+        let sentence = format!("ctx switch tab {tab} to agent \"{agent}\"");
+        let r = Request::OpenTab {
+            window: Some(WindowRef::Number(w)),
+            folder: None,
+            name: None,
+            agent: Some(agent),
+            like: None,
+        };
+        self.request(&sentence.clone(), r, move |app, r| match r {
+            Response::Ok(Output::Opened(o)) => {
+                let Some(new) = o.tab else { return };
+                let m =
+                    Request::Move { tab: TabRef::Number(new), to: WindowRef::Number(w), position: Some(at as u32 + 2) };
+                app.request(&sentence, m, |_, _| {});
+                if idle {
+                    app.request(
+                        &sentence,
+                        Request::CloseTab { tab: TabRef::Number(tab), without_asking: true },
+                        |_, _| {},
+                    );
+                }
+                app.pending_select(o.window, new);
+            }
+            Response::Error(e) => app.error(&e.message),
+            _ => {}
+        });
+    }
+
     /// `ctx reopen tabs from last session`, then show the windows it filled.
     pub fn reopen_session(&mut self) {
         self.request("ctx reopen tabs from last session", Request::ReopenLastSession, |app, r| match r {

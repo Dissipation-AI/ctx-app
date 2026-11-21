@@ -371,6 +371,11 @@ pub enum MenuAction {
         folder: String,
         command: String,
     },
+    /// The tab becomes the agent's: `ctx switch tab N to agent "a"`.
+    SwitchTab {
+        tab: u64,
+        agent: String,
+    },
     Rename(u64),
     Close(u64),
     Tile(u64),

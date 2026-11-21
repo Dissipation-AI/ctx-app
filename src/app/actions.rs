@@ -525,6 +525,37 @@ impl App {
     }
 
     /// Right-click on a tab.
+    /// The agents a tab can switch to (the one it runs as is checked), for the bar's switch
+    /// button and the tab's menu.
+    fn switch_items(&mut self, tab: u64) -> Vec<MenuItem> {
+        self.refresh_agents(false);
+        let owner =
+            self.list.windows.iter().flat_map(|w| &w.tabs).find(|t| t.number == tab).and_then(|t| t.owner.clone());
+        let mut items = vec![MenuItem::heading("Switch this tab to…")];
+        if self.agents.list.is_empty() {
+            items.push(MenuItem::heading(if self.agents.loading {
+                "Loading agents…"
+            } else {
+                "No agents yet: ctx make agent named …"
+            }));
+        }
+        for a in &self.agents.list {
+            let detail = (!a.full_name.is_empty() && a.full_name != a.name).then(|| a.full_name.clone());
+            items.push(MenuItem {
+                detail,
+                checked: owner.as_deref() == Some(a.name.as_str()),
+                ..MenuItem::new(&a.name, MenuAction::SwitchTab { tab, agent: a.name.clone() })
+            });
+        }
+        items
+    }
+
+    /// The bar's switch button: the focused tab becomes an agent's.
+    pub fn switch_menu(&mut self, w: u64, tab: u64, x: f64, y: f64) {
+        let items = self.switch_items(tab);
+        self.open_menu(w, Menu::new(x - 10.0, y, items));
+    }
+
     pub fn tab_menu(&mut self, w: u64, tab: u64, x: f64, y: f64) {
         let tiled = self.wins.get(&w).and_then(|win| win.tiles.as_ref()).is_some_and(|n| n.contains(tab));
         let selected = self.focused_tab(w) == Some(tab);
@@ -535,6 +566,8 @@ impl App {
             items.push(MenuItem::new("Show Side by Side", MenuAction::Tile(tab)));
         }
         items.push(MenuItem::new("Move to New Window", MenuAction::MoveToNewWindow(tab)));
+        items.push(MenuItem::separator());
+        items.extend(self.switch_items(tab));
         items.push(MenuItem::separator());
         items.push(MenuItem::heading("Theme"));
         let current = self.state.tab_themes.get(&tab).cloned().unwrap_or_else(|| self.loaded.app.theme.clone());

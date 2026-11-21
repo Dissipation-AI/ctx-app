@@ -438,8 +438,20 @@ impl App {
                 }
                 return;
             }
+            Hit::Button(chrome::Button::Switch) => {
+                let r = self
+                    .wins
+                    .get(&w)
+                    .and_then(|x| x.bar.buttons.iter().find(|b| b.0 == chrome::Button::Switch))
+                    .map(|b| b.1);
+                if let (Some(r), Some(tab)) = (r, self.focused_tab(w)) {
+                    self.switch_menu(w, tab, r.x, r.y + r.h);
+                }
+                return;
+            }
             Hit::Button(b) => {
                 let kind = match b {
+                    chrome::Button::Switch => return,
                     chrome::Button::Overview => Kind::Overview,
                     chrome::Button::History => Kind::History,
                     chrome::Button::Activity => Kind::Activity,
@@ -1462,6 +1474,7 @@ impl App {
             MenuAction::NewTabIn(win) => self.new_tab(win),
             MenuAction::NewTabAs { window, agent } => self.new_tab_as(window, agent),
             MenuAction::Launch { window, folder, command } => self.new_tab_with(window, Some(folder), Some(command)),
+            MenuAction::SwitchTab { tab, agent } => self.switch_tab(tab, agent),
             MenuAction::Rename(t) => self.start_rename(t),
             MenuAction::Close(t) => self.close_tab(t, false),
             MenuAction::Tile(t) => {
