@@ -429,6 +429,17 @@ pub fn start() {
             app.wins.get(&r.window).and_then(|w| w.panel.as_ref()).is_some_and(|p| p.kind == Kind::Overview),
             "the Overview opens",
         );
+        // Dragging a card to the bottom edge turns on edge-scroll, so a tab can reach a window
+        // scrolled off-screen; releasing it turns the scroll off again.
+        if let Some((cx, cy)) = app.panel_hit_center(r.window, super::panels::PanelHit::Card(r.tab)) {
+            let area = app.panel_area(r.window).unwrap_or(crate::layout::Rect::new(0.0, 0.0, 0.0, 0.0));
+            let body = super::panels::body_of(area);
+            app.mouse_down(r.window, cx, cy, 1, 0, 1);
+            app.mouse_dragged(r.window, cx, body.y + body.h - 6.0, 0, 1);
+            r.check(app.autoscroll == Some(r.window), "dragging a card to the bottom edge starts edge-scrolling");
+            app.mouse_up(r.window, cx, body.y + body.h - 6.0, 0, 1);
+            r.check(app.autoscroll.is_none(), "releasing the card stops edge-scrolling");
+        }
         app.close_panel(r.window);
         // Drag a tab out of the window: it gets a window of its own.
         r.count = app.list.windows.len();
