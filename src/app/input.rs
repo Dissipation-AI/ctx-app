@@ -609,11 +609,11 @@ impl App {
             return;
         }
         if let Some(p) = win.panel.as_mut() {
-            if let Some((tab, _, _, moved)) = p.drag {
-                let moved = moved || true;
-                p.drag = Some((tab, x, y, moved));
+            if let Some((tab, _, _, _)) = p.drag {
+                p.drag = Some((tab, x, y, true));
                 win.dirty = Some(Dirty::All);
                 self.panel_hover(w, x, y);
+                self.maybe_autoscroll(w);
                 self.redraw_dirty();
             }
             return;
@@ -691,6 +691,8 @@ impl App {
         }
         if let Some(p) = win.panel.as_mut() {
             if let Some((tab, _, _, moved)) = p.drag.take() {
+                self.autoscroll = None;
+                let Some(win) = self.wins.get_mut(&w) else { return };
                 win.dirty = Some(Dirty::All);
                 let target = self.panel_hit(w, x, y);
                 if !moved {
@@ -1459,6 +1461,75 @@ impl App {
             win.dirty = Some(Dirty::All);
         }
         self.redraw_dirty();
+    }
+
+    /// Dragging a card near the Overview's top or bottom edge pushes the view that way, so a tab can
+    /// be carried into a window scrolled off-screen. Returns the per-frame scroll in points (negative
+    /// up), zero when the pointer isn't in an edge band or no card is being dragged here.
+    fn autoscroll_velocity(&self, w: u64) -> f64 {
+        let Some(p) = self.wins.get(&w).and_then(|x| x.panel.as_ref()) else { return 0.0 };
+        if p.kind != Kind::Overview {
+            return 0.0;
+        }
+        let Some((_, _, y, true)) = p.drag else { return 0.0 };
+        let Some(area) = self.panel_area(w) else { return 0.0 };
+        let body = panels::body_of(area);
+        const BAND: f64 = 56.0;
+        const MAX: f64 = 18.0;
+        if y < body.y + BAND {
+            -MAX * ((body.y + BAND - y) / BAND).clamp(0.0, 1.0)
+        } else if y > body.y + body.h - BAND {
+            MAX * ((y - (body.y + body.h - BAND)) / BAND).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Start the edge-scroll loop if the dragged card has entered an edge band and it isn't running.
+    fn maybe_autoscroll(&mut self, w: u64) {
+        if self.autoscroll.is_some() || self.autoscroll_velocity(w) == 0.0 {
+            return;
+        }
+        self.autoscroll = Some(w);
+        plat::after(16, Box::new(move || super::later(move |a| a.autoscroll_step(w))));
+    }
+
+    /// One frame of edge-scroll: advance the Overview's scroll, refresh the drop target, and keep
+    /// going until the pointer leaves the band, the drag ends, or the scroll hits its end.
+    pub fn autoscroll_step(&mut self, w: u64) {
+        if self.autoscroll != Some(w) {
+            return;
+        }
+        let v = self.autoscroll_velocity(w);
+        if v == 0.0 {
+            self.autoscroll = None;
+            return;
+        }
+        let max = (self.with_panel_ctx(w, panels::content_height).unwrap_or([0.0; 2])[0]
+            - self.panel_area(w).map(|a| a.h).unwrap_or(0.0)
+            + 80.0)
+            .max(0.0);
+        let pointer = self.wins.get(&w).and_then(|x| x.panel.as_ref()).and_then(|p| p.drag).map(|d| (d.1, d.2));
+        let moved = if let Some(p) = self.wins.get_mut(&w).and_then(|x| x.panel.as_mut()) {
+            let before = p.scroll[0];
+            p.scroll[0] = (p.scroll[0] + v).clamp(0.0, max);
+            p.scroll[0] != before
+        } else {
+            false
+        };
+        if let Some(win) = self.wins.get_mut(&w) {
+            win.dirty = Some(Dirty::All);
+        }
+        if let Some((x, y)) = pointer {
+            self.panel_hover(w, x, y);
+        }
+        self.redraw_dirty();
+        if !moved {
+            // Reached the top or bottom; a later drag move restarts the loop if there's more to show.
+            self.autoscroll = None;
+            return;
+        }
+        plat::after(16, Box::new(move || super::later(move |a| a.autoscroll_step(w))));
     }
 
     fn close_panel_of_tab_window(&mut self, w: u64) {

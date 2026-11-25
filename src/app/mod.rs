@@ -386,6 +386,8 @@ pub struct App {
     pub drop_at: Option<(u64, f64, f64)>,
     pub blink_on: bool,
     pub ticker: Option<plat::Ticker>,
+    /// The window whose Overview is edge-scrolling while a card is dragged near its top/bottom.
+    pub autoscroll: Option<u64>,
     pub system_dark: bool,
     pub active: bool,
     pub quitting: bool,
@@ -472,6 +474,7 @@ pub fn launched() {
         drop_at: None,
         blink_on: true,
         ticker: None,
+        autoscroll: None,
         system_dark: plat::system_is_dark(),
         active: true,
         quitting: false,
